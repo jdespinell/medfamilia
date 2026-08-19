@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  medfamilia:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: medfamilia-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
+      - JWT_SECRET=${JWT_SECRET:-super-secret-key-medfamilia-2026}
+    volumes:
+      - medfamilia_data:/app/data
+      - medfamilia_uploads:/app/uploads
+
+volumes:
+  medfamilia_data:
+    driver: local
+  medfamilia_uploads:
+    driver: local
