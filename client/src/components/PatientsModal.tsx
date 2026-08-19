@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Plus, Trash2, Calendar, Check, ExternalLink } from 'lucide-react';
+import { X, Plus, Trash2, Calendar, Check, Edit2, RefreshCw, Save } from 'lucide-react';
 import { apiRequest } from '../api';
 import { Patient } from '../types';
 
@@ -23,11 +23,21 @@ export const PatientsModal: React.FC<PatientsModalProps> = ({
   onClose,
   onRefresh,
 }) => {
+  // New Patient Form State
   const [name, setName] = useState('');
   const [relationship, setRelationship] = useState('Padre');
   const [color, setColor] = useState('#3b82f6');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Editing Patient State
+  const [editingPatientId, setEditingPatientId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editRelationship, setEditRelationship] = useState('');
+  const [editColor, setEditColor] = useState('');
+
+  // Sync state
+  const [syncingId, setSyncingId] = useState<string | null>(null);
 
   const handleAddPatient = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,6 +57,31 @@ export const PatientsModal: React.FC<PatientsModalProps> = ({
       setError(err.message || 'Error agregando familiar.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleStartEdit = (p: Patient) => {
+    setEditingPatientId(p.id);
+    setEditName(p.name);
+    setEditRelationship(p.relationship || 'Familiar');
+    setEditColor(p.color);
+  };
+
+  const handleSaveEdit = async (id: string) => {
+    if (!editName.trim()) return;
+    try {
+      await apiRequest(`/patients/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: editName,
+          relationship: editRelationship,
+          color: editColor,
+        }),
+      });
+      setEditingPatientId(null);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Error al guardar los cambios del familiar.');
     }
   };
 
@@ -71,6 +106,19 @@ export const PatientsModal: React.FC<PatientsModalProps> = ({
     }
   };
 
+  const handleSyncExistingAppointments = async (patientId: string) => {
+    setSyncingId(patientId);
+    try {
+      await apiRequest(`/calendar/sync-patient/${patientId}`, { method: 'POST' });
+      alert('¡Citas sincronizadas con éxito en Google Calendar!');
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Error al sincronizar citas con Google Calendar.');
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
       <div className="w-full max-w-lg bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[92vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom sm:zoom-in-95">
@@ -88,48 +136,134 @@ export const PatientsModal: React.FC<PatientsModalProps> = ({
           {/* List of current family patients */}
           <div className="space-y-3">
             <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Miembros de la familia</h3>
-            {patients.map((p) => (
-              <div
-                key={p.id}
-                className="p-4 rounded-2xl border-2 border-slate-100 bg-slate-50 flex items-center justify-between gap-3"
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-5 h-5 rounded-full shrink-0 shadow-sm"
-                    style={{ backgroundColor: p.color }}
-                  />
-                  <div>
-                    <p className="text-base font-extrabold text-slate-900">{p.name}</p>
-                    <p className="text-xs font-semibold text-slate-500">{p.relationship || 'Familiar'}</p>
+            {patients.map((p) => {
+              const isEditing = editingPatientId === p.id;
+
+              if (isEditing) {
+                return (
+                  <div key={p.id} className="p-4 rounded-2xl border-2 border-blue-200 bg-blue-50/50 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        placeholder="Nombre"
+                        className="w-full p-2.5 text-base rounded-xl border border-blue-300 font-bold bg-white"
+                      />
+                      <input
+                        type="text"
+                        value={editRelationship}
+                        onChange={(e) => setEditRelationship(e.target.value)}
+                        placeholder="Parentesco"
+                        className="w-full p-2.5 text-base rounded-xl border border-blue-300 bg-white"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-blue-200">
+                        {COLOR_OPTIONS.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => setEditColor(c)}
+                            className="w-6 h-6 rounded-full flex items-center justify-center transition"
+                            style={{ backgroundColor: c }}
+                          >
+                            {editColor === c && <Check className="w-3.5 h-3.5 text-white" />}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setEditingPatientId(null)}
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-200 text-slate-700"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveEdit(p.id)}
+                          className="px-4 py-1.5 rounded-xl text-xs font-bold bg-blue-600 text-white flex items-center gap-1 shadow-md shadow-blue-500/20"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>Guardar</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                );
+              }
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleConnectGoogleCalendar(p.id)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
-                      p.google_refresh_token
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-blue-100 hover:bg-blue-200 text-blue-800'
-                    }`}
-                  >
-                    <Calendar className="w-3.5 h-3.5" />
-                    <span>{p.google_refresh_token ? 'Google Conectado' : 'Conectar Google'}</span>
-                  </button>
+              return (
+                <div
+                  key={p.id}
+                  className="p-4 rounded-2xl border-2 border-slate-100 bg-slate-50 space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-5 h-5 rounded-full shrink-0 shadow-sm"
+                        style={{ backgroundColor: p.color }}
+                      />
+                      <div>
+                        <p className="text-base font-extrabold text-slate-900">{p.name}</p>
+                        <p className="text-xs font-semibold text-slate-500">{p.relationship || 'Familiar'}</p>
+                      </div>
+                    </div>
 
-                  {patients.length > 1 && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleStartEdit(p)}
+                        className="p-2 rounded-xl text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition"
+                        title="Editar nombre o color"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+
+                      {patients.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePatient(p.id)}
+                          className="p-2 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                          title="Eliminar familiar"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Google Calendar Section */}
+                  <div className="pt-2 border-t border-slate-200/60 flex flex-wrap items-center justify-between gap-2">
                     <button
                       type="button"
-                      onClick={() => handleDeletePatient(p.id)}
-                      className="p-2 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                      onClick={() => handleConnectGoogleCalendar(p.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
+                        p.google_refresh_token
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-blue-100 hover:bg-blue-200 text-blue-800'
+                      }`}
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>{p.google_refresh_token ? 'Google Conectado ✅' : 'Conectar Google Calendar'}</span>
                     </button>
-                  )}
+
+                    {p.google_refresh_token && (
+                      <button
+                        type="button"
+                        onClick={() => handleSyncExistingAppointments(p.id)}
+                        disabled={syncingId === p.id}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1 transition shadow-sm"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${syncingId === p.id ? 'animate-spin' : ''}`} />
+                        <span>Sincronizar Citas Previas</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Add new family member form */}
