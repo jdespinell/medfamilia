@@ -9,6 +9,8 @@ function getAiInstance() {
   return new GoogleGenAI({ apiKey });
 }
 
+const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+
 export interface ExtractedAppointmentData {
   title: string;
   appointment_type: 'consulta' | 'examen' | 'laboratorio' | 'procedimiento';
@@ -42,19 +44,28 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
 }
 `;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: prompt,
-  });
-
-  const responseText = response.text || '';
-  const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-
   try {
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: prompt,
+    });
+
+    const responseText = response.text || '';
+    const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
-  } catch (err) {
-    console.error('Error parseando JSON de Gemini:', responseText);
-    throw new Error('No se pudo estructurar los datos de la cita desde el texto.');
+  } catch (err: any) {
+    console.error('Error procesando Gemini:', err);
+    // Fallback attempt with gemini-1.5-flash if 2.0 fails
+    if (MODEL_NAME !== 'gemini-1.5-flash') {
+      const fallbackResponse = await ai.models.generateContent({
+        model: 'gemini-1.5-flash',
+        contents: prompt,
+      });
+      const responseText = fallbackResponse.text || '';
+      const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(cleanJson);
+    }
+    throw err;
   }
 }
 
@@ -82,27 +93,42 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura:
 }
 `;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: [
-      {
-        inlineData: {
-          data: base64Data,
-          mimeType: mimeType || 'image/jpeg',
-        },
-      },
-      { text: prompt },
-    ],
-  });
-
-  const responseText = response.text || '';
-  const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-
   try {
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: [
+        {
+          inlineData: {
+            data: base64Data,
+            mimeType: mimeType || 'image/jpeg',
+          },
+        },
+        { text: prompt },
+      ],
+    });
+
+    const responseText = response.text || '';
+    const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
-  } catch (err) {
-    console.error('Error parseando JSON de Gemini Vision:', responseText);
-    throw new Error('No se pudo leer la información de la foto de la cita.');
+  } catch (err: any) {
+    if (MODEL_NAME !== 'gemini-1.5-flash') {
+      const fallbackResponse = await ai.models.generateContent({
+        model: 'gemini-1.5-flash',
+        contents: [
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType || 'image/jpeg',
+            },
+          },
+          { text: prompt },
+        ],
+      });
+      const responseText = fallbackResponse.text || '';
+      const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(cleanJson);
+    }
+    throw err;
   }
 }
 
@@ -128,18 +154,37 @@ Incluye:
 Mantén un tono tranquilizador, informativo y respetuoso.
 `;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: [
-      {
-        inlineData: {
-          data: base64Data,
-          mimeType: mimeType === 'application/pdf' ? 'application/pdf' : (mimeType || 'image/jpeg'),
+  try {
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: [
+        {
+          inlineData: {
+            data: base64Data,
+            mimeType: mimeType === 'application/pdf' ? 'application/pdf' : (mimeType || 'image/jpeg'),
+          },
         },
-      },
-      { text: prompt },
-    ],
-  });
+        { text: prompt },
+      ],
+    });
 
-  return response.text || 'No se pudo generar un resumen del examen.';
+    return response.text || 'No se pudo generar un resumen del examen.';
+  } catch (err: any) {
+    if (MODEL_NAME !== 'gemini-1.5-flash') {
+      const fallbackResponse = await ai.models.generateContent({
+        model: 'gemini-1.5-flash',
+        contents: [
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType === 'application/pdf' ? 'application/pdf' : (mimeType || 'image/jpeg'),
+            },
+          },
+          { text: prompt },
+        ],
+      });
+      return fallbackResponse.text || 'No se pudo generar un resumen del examen.';
+    }
+    throw err;
+  }
 }
