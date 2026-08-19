@@ -9,7 +9,9 @@ function getAiInstance() {
   return new GoogleGenAI({ apiKey });
 }
 
-const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+function getModelName(): string {
+  return process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+}
 
 export interface ExtractedAppointmentData {
   title: string;
@@ -27,6 +29,8 @@ export interface ExtractedAppointmentData {
  */
 export async function extractAppointmentFromText(text: string): Promise<ExtractedAppointmentData> {
   const ai = getAiInstance();
+  const model = getModelName();
+
   const prompt = `
 Eres un asistente médico experto. Analiza el siguiente texto descriptivo de una cita o examen médico e identifica la información relevante.
 Texto: "${text}"
@@ -46,7 +50,7 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
 
   try {
     const response = await ai.models.generateContent({
-      model: MODEL_NAME,
+      model: model,
       contents: prompt,
     });
 
@@ -54,18 +58,8 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
     const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
   } catch (err: any) {
-    console.error('Error procesando Gemini:', err);
-    // Fallback attempt with gemini-1.5-flash if 2.0 fails
-    if (MODEL_NAME !== 'gemini-1.5-flash') {
-      const fallbackResponse = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
-        contents: prompt,
-      });
-      const responseText = fallbackResponse.text || '';
-      const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      return JSON.parse(cleanJson);
-    }
-    throw err;
+    console.error(`Error procesando Gemini con modelo [${model}]:`, err);
+    throw new Error(err?.message || `Error procesando la solicitud con el modelo ${model}`);
   }
 }
 
@@ -74,6 +68,7 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
  */
 export async function extractAppointmentFromImage(filePath: string, mimeType: string): Promise<ExtractedAppointmentData> {
   const ai = getAiInstance();
+  const model = getModelName();
   const fileBuffer = fs.readFileSync(filePath);
   const base64Data = fileBuffer.toString('base64');
 
@@ -95,7 +90,7 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura:
 
   try {
     const response = await ai.models.generateContent({
-      model: MODEL_NAME,
+      model: model,
       contents: [
         {
           inlineData: {
@@ -111,24 +106,8 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura:
     const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
   } catch (err: any) {
-    if (MODEL_NAME !== 'gemini-1.5-flash') {
-      const fallbackResponse = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
-        contents: [
-          {
-            inlineData: {
-              data: base64Data,
-              mimeType: mimeType || 'image/jpeg',
-            },
-          },
-          { text: prompt },
-        ],
-      });
-      const responseText = fallbackResponse.text || '';
-      const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      return JSON.parse(cleanJson);
-    }
-    throw err;
+    console.error(`Error procesando Gemini Vision con modelo [${model}]:`, err);
+    throw new Error(err?.message || `Error analizando la foto con el modelo ${model}`);
   }
 }
 
@@ -137,6 +116,7 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura:
  */
 export async function summarizeExamResult(filePath: string, mimeType: string): Promise<string> {
   const ai = getAiInstance();
+  const model = getModelName();
   const fileBuffer = fs.readFileSync(filePath);
   const base64Data = fileBuffer.toString('base64');
 
@@ -156,7 +136,7 @@ Mantén un tono tranquilizador, informativo y respetuoso.
 
   try {
     const response = await ai.models.generateContent({
-      model: MODEL_NAME,
+      model: model,
       contents: [
         {
           inlineData: {
@@ -170,21 +150,7 @@ Mantén un tono tranquilizador, informativo y respetuoso.
 
     return response.text || 'No se pudo generar un resumen del examen.';
   } catch (err: any) {
-    if (MODEL_NAME !== 'gemini-1.5-flash') {
-      const fallbackResponse = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
-        contents: [
-          {
-            inlineData: {
-              data: base64Data,
-              mimeType: mimeType === 'application/pdf' ? 'application/pdf' : (mimeType || 'image/jpeg'),
-            },
-          },
-          { text: prompt },
-        ],
-      });
-      return fallbackResponse.text || 'No se pudo generar un resumen del examen.';
-    }
+    console.error(`Error generando resumen de examen con modelo [${model}]:`, err);
     throw err;
   }
 }
