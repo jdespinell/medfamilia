@@ -139,9 +139,14 @@ router.post('/', (req: AuthRequest, res) => {
     const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id) as any;
     const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(patient_id) as any;
 
-    // Automatic Google Calendar Sync (Async in background)
-    if (patient && patient.google_refresh_token) {
-      syncAppointmentToGoogleCalendar(patient.google_refresh_token, appointment).then((eventId) => {
+    if (patient) {
+      appointment.patient_name = patient.name;
+    }
+
+    // Automatic Google Calendar Sync for ALL connected family accounts (Async in background)
+    const connectedPatients = db.prepare('SELECT * FROM patients WHERE family_id = ? AND google_refresh_token IS NOT NULL').all(familyId) as any[];
+    for (const cp of connectedPatients) {
+      syncAppointmentToGoogleCalendar(cp.google_refresh_token, appointment).then((eventId) => {
         if (eventId) {
           db.prepare('UPDATE appointments SET google_event_id = ? WHERE id = ?').run([eventId, id]);
         }
@@ -150,7 +155,7 @@ router.post('/', (req: AuthRequest, res) => {
 
     // Push notification to family
     sendNotificationToFamily(familyId, {
-      title: `🩺 Nueva Cita Registrada: ${title}`,
+      title: `🩺 Nueva Cita Registrada: [${patient?.name || 'Paciente'}] ${title}`,
       body: `${patient?.name || 'Paciente'} - ${new Date(date_time).toLocaleString('es-ES')}`,
       url: '/',
     });
@@ -212,9 +217,13 @@ router.put('/:id', (req: AuthRequest, res) => {
 
     const updated = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id) as any;
     const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(updated.patient_id) as any;
+    if (patient) {
+      updated.patient_name = patient.name;
+    }
 
-    if (patient && patient.google_refresh_token) {
-      syncAppointmentToGoogleCalendar(patient.google_refresh_token, updated);
+    const connectedPatients = db.prepare('SELECT * FROM patients WHERE family_id = ? AND google_refresh_token IS NOT NULL').all(familyId) as any[];
+    for (const cp of connectedPatients) {
+      syncAppointmentToGoogleCalendar(cp.google_refresh_token, updated);
     }
 
     return res.json(updated);

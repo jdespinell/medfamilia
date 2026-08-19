@@ -5,12 +5,14 @@ import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-// Helper function to sync all appointments of a patient to Google Calendar
-export async function syncAllPatientAppointments(patientId: string, refreshToken: string) {
-  const appointments = db.prepare('SELECT * FROM appointments WHERE patient_id = ? AND status != ?').all([
-    patientId,
-    'cancelada'
-  ]) as any[];
+// Helper function to sync ALL family appointments to a connected Google Calendar
+export async function syncAllFamilyAppointments(familyId: string, refreshToken: string) {
+  const appointments = db.prepare(`
+    SELECT a.*, p.name as patient_name
+    FROM appointments a
+    JOIN patients p ON a.patient_id = p.id
+    WHERE a.family_id = ? AND a.status != ?
+  `).all([familyId, 'cancelada']) as any[];
 
   for (const app of appointments) {
     try {
@@ -43,7 +45,7 @@ router.get('/auth-url/:patientId', authMiddleware, (req: AuthRequest, res) => {
   return res.json({ url, redirectUri: dynamicRedirectUri });
 });
 
-// Manual sync trigger for a patient's appointments
+// Manual sync trigger for all family appointments to a patient's connected Google Calendar
 router.post('/sync-patient/:patientId', authMiddleware, async (req: AuthRequest, res) => {
   const familyId = req.family!.id;
   const { patientId } = req.params;
@@ -53,9 +55,9 @@ router.post('/sync-patient/:patientId', authMiddleware, async (req: AuthRequest,
     return res.status(400).json({ error: 'El familiar no tiene una cuenta de Google Calendar vinculada.' });
   }
 
-  await syncAllPatientAppointments(patient.id, patient.google_refresh_token);
+  await syncAllFamilyAppointments(familyId, patient.google_refresh_token);
 
-  return res.json({ message: 'Citas sincronizadas correctamente con Google Calendar.' });
+  return res.json({ message: 'Todas las citas familiares se han sincronizado con Google Calendar.' });
 });
 
 // OAuth Callback handler
@@ -85,15 +87,18 @@ router.get('/callback', async (req, res) => {
         patientId
       ]);
 
-      // Retroactive Sync of existing appointments!
-      syncAllPatientAppointments(patientId, tokens.refresh_token);
+      const patient = db.prepare('SELECT family_id FROM patients WHERE id = ?').get(patientId) as any;
+      if (patient) {
+        // Sync ALL family appointments to this connected Google Calendar!
+        syncAllFamilyAppointments(patient.family_id, tokens.refresh_token);
+      }
     }
 
     return res.send(`
       <html>
         <body style="font-family: sans-serif; text-align: center; padding: 40px;">
           <h2 style="color: #10b981;">✅ Google Calendar vinculado correctamente</h2>
-          <p>Tus citas previas y próximas se están sincronizando con Google Calendar.</p>
+          <p>Todas las citas familiares de tus papás se están sincronizando con Google Calendar.</p>
           <script>
             setTimeout(() => {
               if (window.opener) { window.close(); } else { window.location.href = '/'; }

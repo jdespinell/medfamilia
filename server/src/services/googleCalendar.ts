@@ -28,6 +28,7 @@ export async function syncAppointmentToGoogleCalendar(
   appointment: {
     id: string;
     title: string;
+    patient_name?: string;
     specialist?: string;
     location?: string;
     date_time: string;
@@ -38,7 +39,6 @@ export async function syncAppointmentToGoogleCalendar(
 ): Promise<string | null> {
   const oauth2Client = getOAuth2Client();
   if (!oauth2Client || !refreshToken) {
-    console.log('Google Calendar sync omitido (Falta OAuth client o refreshToken del paciente)');
     return null;
   }
 
@@ -48,13 +48,17 @@ export async function syncAppointmentToGoogleCalendar(
   const startTime = new Date(appointment.date_time);
   const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
 
+  const patientTag = appointment.patient_name ? `[${appointment.patient_name}] ` : '';
+  const summaryTitle = `🩺 ${patientTag}${appointment.title}`;
+
   let description = `Cita Médica registrada en MedFamilia.`;
+  if (appointment.patient_name) description += `\nPaciente: ${appointment.patient_name}`;
   if (appointment.specialist) description += `\nEspecialista: ${appointment.specialist}`;
   if (appointment.requires_fasting) description += `\n⚠️ REQUIERE AYUNO`;
   if (appointment.prep_instructions) description += `\nIndicaciones: ${appointment.prep_instructions}`;
 
   const event = {
-    summary: `🩺 ${appointment.title}`,
+    summary: summaryTitle,
     location: appointment.location || '',
     description: description,
     start: {
