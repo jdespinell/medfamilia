@@ -9,7 +9,7 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "@google/genai": "^0.1.2",
+    "@google/genai": "*",
     "bcryptjs": "^3.0.2",
     "better-sqlite3": "^11.8.1",
     "cors": "^2.8.5",
