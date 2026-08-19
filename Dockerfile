@@ -19,7 +19,7 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 
 # Install native dependencies for better-sqlite3
-RUN apk add --no-co-cache python3 make g++
+RUN apk add --no-cache python3 make g++
 
 COPY server/package*.json ./server/
 WORKDIR /app/server
