@@ -1,21 +1,20 @@
 import webpush from 'web-push';
 import db from '../database/db.js';
 
-const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
-const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+const defaultPublicKey = 'BL8k_YAaGFnZCGrTtzyR8ZUwex8epkyC-rrtY7nkZPL2EoFXv1Nt8mZIyNoL67X10YWOReNmQgUg7bGk34PgV6Q';
+const defaultPrivateKey = 'rRlt4TVJp4vRnl4XmnKIdfYwJ_qofzrG9lleFYmWiDM';
+
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || defaultPublicKey;
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || defaultPrivateKey;
 const vapidEmail = process.env.VAPID_EMAIL || 'mailto:contacto@medfamilia.app';
 
 let isPushConfigured = false;
 
-if (vapidPublicKey && vapidPrivateKey) {
-  try {
-    webpush.setVapidDetails(vapidEmail, vapidPublicKey, vapidPrivateKey);
-    isPushConfigured = true;
-  } catch (err) {
-    console.warn('⚠️ VAPID keys no configuradas o inválidas. Las notificaciones Push estarán desactivadas hasta configurar VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY válidas en el .env');
-  }
-} else {
-  console.warn('⚠️ VAPID keys no configuradas. Las notificaciones Push estarán desactivadas.');
+try {
+  webpush.setVapidDetails(vapidEmail, vapidPublicKey, vapidPrivateKey);
+  isPushConfigured = true;
+} catch (err) {
+  console.warn('⚠️ Error configurando VAPID keys para notificaciones Push:', err);
 }
 
 export function getVapidPublicKey() {
@@ -39,7 +38,6 @@ export async function sendNotificationToFamily(familyId: string, payload: { titl
       );
     } catch (err: any) {
       if (err.statusCode === 410 || err.statusCode === 404) {
-        // Expired subscription, remove from DB
         db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(sub.id);
       } else {
         console.error('Error enviando notificacion push:', err);

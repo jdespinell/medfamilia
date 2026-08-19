@@ -8,15 +8,20 @@ const router = Router();
 // Get OAuth URL for a patient
 router.get('/auth-url/:patientId', authMiddleware, (req: AuthRequest, res) => {
   const { patientId } = req.params;
-  const url = getAuthUrl(patientId);
+
+  const host = req.get('host');
+  const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+  const dynamicRedirectUri = process.env.GOOGLE_REDIRECT_URI || `${protocol}://${host}/api/calendar/callback`;
+
+  const url = getAuthUrl(patientId, dynamicRedirectUri);
 
   if (!url) {
     return res.status(400).json({
-      error: 'Google OAuth no está configurado. Configure GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET.',
+      error: 'Google OAuth no está configurado. Configure GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en el .env.',
     });
   }
 
-  return res.json({ url });
+  return res.json({ url, redirectUri: dynamicRedirectUri });
 });
 
 // OAuth Callback handler
@@ -28,7 +33,11 @@ router.get('/callback', async (req, res) => {
     return res.status(400).send('Respuesta de autenticación de Google inválida.');
   }
 
-  const oauth2Client = getOAuth2Client();
+  const host = req.get('host');
+  const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+  const dynamicRedirectUri = process.env.GOOGLE_REDIRECT_URI || `${protocol}://${host}/api/calendar/callback`;
+
+  const oauth2Client = getOAuth2Client(dynamicRedirectUri);
   if (!oauth2Client) {
     return res.status(500).send('Google OAuth no configurado en el servidor.');
   }
@@ -37,10 +46,10 @@ router.get('/callback', async (req, res) => {
     const { tokens } = await oauth2Client.getToken(code as string);
 
     if (tokens.refresh_token) {
-      db.prepare('UPDATE patients SET google_refresh_token = ? WHERE id = ?').run(
+      db.prepare('UPDATE patients SET google_refresh_token = ? WHERE id = ?').run([
         tokens.refresh_token,
         patientId
-      );
+      ]);
     }
 
     return res.send(`

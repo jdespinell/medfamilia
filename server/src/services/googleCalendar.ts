@@ -2,17 +2,17 @@ import { google } from 'googleapis';
 
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/calendar/callback';
 
-export function getOAuth2Client() {
+export function getOAuth2Client(customRedirectUri?: string) {
   if (!CLIENT_ID || !CLIENT_SECRET) {
     return null;
   }
-  return new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+  const redirectUri = customRedirectUri || process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/calendar/callback';
+  return new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, redirectUri);
 }
 
-export function getAuthUrl(patientId: string) {
-  const oauth2Client = getOAuth2Client();
+export function getAuthUrl(patientId: string, customRedirectUri?: string) {
+  const oauth2Client = getOAuth2Client(customRedirectUri);
   if (!oauth2Client) return null;
 
   return oauth2Client.generateAuthUrl({
@@ -46,7 +46,6 @@ export async function syncAppointmentToGoogleCalendar(
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
   const startTime = new Date(appointment.date_time);
-  // Default duration 1 hour
   const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
 
   let description = `Cita Médica registrada en MedFamilia.`;
@@ -60,7 +59,7 @@ export async function syncAppointmentToGoogleCalendar(
     description: description,
     start: {
       dateTime: startTime.toISOString(),
-      timeZone: 'America/Bogota', // Standard timezone, adjust if needed
+      timeZone: 'America/Bogota',
     },
     end: {
       dateTime: endTime.toISOString(),
@@ -69,15 +68,14 @@ export async function syncAppointmentToGoogleCalendar(
     reminders: {
       useDefault: false,
       overrides: [
-        { method: 'popup', minutes: 24 * 60 }, // 1 day before
-        { method: 'popup', minutes: 2 * 60 },  // 2 hours before
+        { method: 'popup', minutes: 24 * 60 },
+        { method: 'popup', minutes: 2 * 60 },
       ],
     },
   };
 
   try {
     if (appointment.google_event_id) {
-      // Update existing event
       const res = await calendar.events.update({
         calendarId: 'primary',
         eventId: appointment.google_event_id,
@@ -85,7 +83,6 @@ export async function syncAppointmentToGoogleCalendar(
       });
       return res.data.id || appointment.google_event_id;
     } else {
-      // Create new event
       const res = await calendar.events.insert({
         calendarId: 'primary',
         requestBody: event,
