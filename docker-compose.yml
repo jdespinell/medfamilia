@@ -23,9 +23,10 @@ services:
     container_name: medfamilia-evolution-api
     restart: unless-stopped
     ports:
-      - "8085:8080" # Puerto 8085 libre (el 8080 está ocupado por finanzas y 8081 por nginx)
+      - "0.0.0.0:8085:8080" # Mapeo explícito al puerto 8085 del host
     environment:
       - SERVER_URL=http://localhost:8085
+      - SERVER_PORT=8080
       - DOCKER_ENV=true
       - AUTHENTICATION_TYPE=apikey
       - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-medfamilia_whatsapp_key_2026}
