@@ -35,7 +35,7 @@ services:
       - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-medfamilia_whatsapp_key_2026}
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
-      - DATABASE_CONNECTION_URI=postgresql://${POSTGRES_USER:-medfamilia_user}:${POSTGRES_PASSWORD:-medfamilia_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-medfamilia}?schema=public
+      - DATABASE_CONNECTION_URI=postgresql://${POSTGRES_USER:-medfamilia_user}:${POSTGRES_PASSWORD:-medfamilia_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-medfamilia}?schema=evolution_api
       - DATABASE_CONNECTION_CLIENT_NAME=evolution_exchange
       - DATABASE_SAVE_DATA_INSTANCE=true
       - LOG_LEVEL=ERROR
