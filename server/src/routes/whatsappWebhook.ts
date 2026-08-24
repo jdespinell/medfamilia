@@ -32,6 +32,77 @@ function checkAndIncrementAiUsage(familyId: string): boolean {
 }
 
 /**
+ * Visual QR Display Route for scanning WhatsApp in browser
+ */
+router.get('/qr', async (req: Request, res: Response) => {
+  try {
+    const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
+    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+    const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
+
+    const response = await fetch(`${EVOLUTION_API_URL}/instance/connect/${INSTANCE_NAME}`, {
+      headers: { apikey: EVOLUTION_API_KEY }
+    });
+
+    const data = await response.json() as any;
+    const base64Img = data?.base64 || data?.qrcode?.base64 || data?.code;
+
+    if (base64Img) {
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Vincular WhatsApp - MedFamilia</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>
+            body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background: #f3f4f6; margin: 0; padding: 20px; text-align: center; }
+            .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 400px; }
+            img { max-width: 280px; height: auto; border-radius: 8px; border: 1px solid #e5e7eb; padding: 10px; }
+            h2 { color: #1e40af; margin-top: 0; }
+            p { color: #4b5563; font-size: 14px; line-height: 1.5; }
+            .btn { display: inline-block; margin-top: 15px; padding: 10px 20px; background: #2563eb; color: white; border-radius: 8px; text-decoration: none; font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>🩺 MedFamilia SaaS</h2>
+            <p>Escanea este Código QR desde WhatsApp ➔ <b>Dispositivos vinculados</b> en tu celular:</p>
+            <img src="${base64Img.startsWith('data:') ? base64Img : 'data:image/png;base64,' + base64Img}" alt="Código QR de WhatsApp" />
+            <br/>
+            <a href="javascript:location.reload()" class="btn">🔄 Actualizar QR</a>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    return res.status(200).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Vincular WhatsApp - MedFamilia</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background: #f3f4f6; margin: 0; padding: 20px; text-align: center; }
+          .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 400px; }
+          h2 { color: #059669; margin-top: 0; }
+          p { color: #4b5563; font-size: 14px; line-height: 1.5; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>✅ WhatsApp Conectado</h2>
+          <p>La instancia de WhatsApp ya se encuentra vinculada y activa para MedFamilia.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err: any) {
+    return res.status(500).send(`<h2>Error conectando con Evolution API:</h2><p>${err.message}</p>`);
+  }
+});
+
+/**
  * Webhook Endpoint para recibir eventos y mensajes entrantes de Evolution API
  */
 router.post('/webhook', async (req: Request, res: Response) => {
