@@ -4,7 +4,6 @@ import {
   Plus,
   Calendar as CalendarIcon,
   ListFilter,
-  FileText,
   Users,
   Bell,
   Share2,
@@ -12,21 +11,20 @@ import {
   MapPin,
   Clock,
   User,
-  Sparkles,
   AlertCircle,
   ChevronLeft,
   ChevronRight,
-  CheckCircle2,
-  FileDown,
-  MessageSquare,
-  Filter,
   Stethoscope,
-  ChevronRight as ChevronRightIcon
+  ChevronRight as ChevronRightIcon,
+  History,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  MessageSquare
 } from 'lucide-react';
 import { apiRequest, removeToken } from '../api';
-import { Family, Patient, Appointment, ExamResult, Specialty } from '../types';
+import { Family, Patient, Appointment, Specialty } from '../types';
 import { AppointmentModal } from '../components/AppointmentModal';
-import { ExamModal } from '../components/ExamModal';
 import { PatientsModal } from '../components/PatientsModal';
 import { AppointmentDetailModal } from '../components/AppointmentDetailModal';
 
@@ -41,11 +39,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   const [selectedPatientId, setSelectedPatientId] = useState<string>('all');
   const [selectedSpecialty, setSelectedSpecialty] = useState<string>('all');
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [exams, setExams] = useState<ExamResult[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // View modes
-  const [viewMode, setViewMode] = useState<'list' | 'calendar' | 'exams'>('list');
+  // View modes: list or calendar
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+
+  // Past appointments accordion toggle
+  const [showPastAppointments, setShowPastAppointments] = useState(false);
 
   // Calendar state
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -54,7 +54,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   const [showAppointmentModal, setShowAppointmentModal] = useState(false);
   const [appointmentToEdit, setAppointmentToEdit] = useState<Appointment | null>(null);
   const [selectedAppointmentForDetail, setSelectedAppointmentForDetail] = useState<Appointment | null>(null);
-  const [showExamModal, setShowExamModal] = useState(false);
   const [showPatientsModal, setShowPatientsModal] = useState(false);
 
   // Push notification state
@@ -69,15 +68,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [patientsRes, appointmentsRes, examsRes] = await Promise.all([
+      const [patientsRes, appointmentsRes] = await Promise.all([
         apiRequest('/patients'),
         apiRequest(`/appointments?patient_id=${selectedPatientId}&specialty=${selectedSpecialty}`),
-        apiRequest(`/exams?patient_id=${selectedPatientId}`),
       ]);
 
       setPatients(patientsRes);
       setAppointments(appointmentsRes);
-      setExams(examsRes);
 
       // Keep selected detail appointment up to date if open
       if (selectedAppointmentForDetail) {
@@ -146,7 +143,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
 
     let text = `🩺 *Citas Médicas Familiares (${family.name})*\n\n`;
 
-    appointments.slice(0, 10).forEach((a) => {
+    const nowTime = new Date().getTime();
+    const upcoming = appointments
+      .filter((a) => new Date(a.date_time).getTime() >= nowTime)
+      .sort((a, b) => new Date(a.date_time).getTime() - new Date(b.date_time).getTime());
+
+    (upcoming.length > 0 ? upcoming : appointments).slice(0, 10).forEach((a) => {
       const dateStr = new Date(a.date_time).toLocaleString('es-ES', {
         weekday: 'short',
         day: 'numeric',
@@ -168,6 +170,143 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
 
     const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
     window.open(whatsappUrl, '_blank');
+  };
+
+  // Separate upcoming vs past appointments
+  const nowTime = new Date().getTime();
+  const upcomingAppointments = appointments
+    .filter((a) => new Date(a.date_time).getTime() >= nowTime && a.status !== 'completada')
+    .sort((a, b) => new Date(a.date_time).getTime() - new Date(b.date_time).getTime());
+
+  const pastAppointments = appointments
+    .filter((a) => new Date(a.date_time).getTime() < nowTime || a.status === 'completada')
+    .sort((a, b) => new Date(b.date_time).getTime() - new Date(a.date_time).getTime());
+
+  const renderAppointmentCard = (a: Appointment, isPast = false) => {
+    const dateObj = new Date(a.date_time);
+    const isFasting = Boolean(a.requires_fasting);
+    const attachedCount = a.attached_results?.length || 0;
+
+    return (
+      <div
+        key={a.id}
+        onClick={() => setSelectedAppointmentForDetail(a)}
+        className={`bg-white rounded-3xl border-2 shadow-sm p-5 space-y-3 hover:shadow-md transition relative overflow-hidden cursor-pointer group ${
+          isPast ? 'border-slate-200/80 bg-slate-50/50 opacity-90' : 'border-slate-100'
+        }`}
+      >
+        {/* Patient Color Left Bar */}
+        <div
+          className="absolute left-0 top-0 bottom-0 w-3"
+          style={{ backgroundColor: a.patient_color || '#3b82f6' }}
+        />
+
+        <div className="pl-2 flex items-start justify-between gap-3">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className="px-2.5 py-0.5 rounded-full text-xs font-black text-white"
+                style={{ backgroundColor: a.patient_color || '#3b82f6' }}
+              >
+                {a.patient_name || 'Paciente'}
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-bold text-xs uppercase">
+                {a.appointment_type}
+              </span>
+              {a.specialty && (
+                <span className="px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-800 font-bold text-xs">
+                  {a.specialty}
+                </span>
+              )}
+              {isPast && (
+                <span className="px-2 py-0.5 rounded-md bg-slate-200 text-slate-600 font-bold text-xs">
+                  Realizada
+                </span>
+              )}
+            </div>
+            <h3 className="text-xl font-black text-slate-900 mt-1 group-hover:text-blue-600 transition">
+              {a.title}
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setAppointmentToEdit(a);
+                setShowAppointmentModal(true);
+              }}
+              className="text-xs font-bold text-slate-500 hover:text-blue-600 bg-slate-100 hover:bg-blue-50 px-3 py-1.5 rounded-xl transition"
+            >
+              Editar
+            </button>
+            <ChevronRightIcon className="w-5 h-5 text-slate-400 group-hover:translate-x-0.5 transition" />
+          </div>
+        </div>
+
+        {/* Date and Time Banner */}
+        <div className="pl-2 flex flex-wrap items-center gap-4 text-sm font-bold text-slate-700 bg-slate-50 p-3 rounded-2xl border border-slate-100">
+          <div className="flex items-center gap-1.5 text-blue-700">
+            <CalendarIcon className="w-4 h-4" />
+            <span>
+              {dateObj.toLocaleDateString('es-ES', {
+                weekday: 'short',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric'
+              })}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 text-slate-900">
+            <Clock className="w-4 h-4 text-slate-500" />
+            <span>
+              {dateObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+        </div>
+
+        {/* Details: Doctor, Location */}
+        <div className="pl-2 space-y-1.5 text-sm text-slate-600">
+          {a.specialist && (
+            <p className="flex items-center gap-2 font-medium">
+              <User className="w-4 h-4 text-slate-400 shrink-0" />
+              <span>Especialista: <strong className="text-slate-800">{a.specialist}</strong></span>
+            </p>
+          )}
+          {a.location && (
+            <p className="flex items-center gap-2 font-medium">
+              <MapPin className="w-4 h-4 text-slate-400 shrink-0" />
+              <span>Lugar: <strong className="text-slate-800">{a.location}</strong></span>
+            </p>
+          )}
+        </div>
+
+        {/* Fasting Warning (Only if upcoming) */}
+        {!isPast && isFasting && (
+          <div className="ml-2 p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 font-extrabold text-sm flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+            <span>⚠️ CITA REQUIERE AYUNO</span>
+          </div>
+        )}
+
+        {/* Attached Results / Notes Summary Badge */}
+        <div className="ml-2 flex flex-wrap items-center gap-2 pt-1">
+          {attachedCount > 0 && (
+            <span className="px-3 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-1">
+              <FileText className="w-3.5 h-3.5 text-emerald-600" />
+              <span>{attachedCount} Resultado(s) adjunto(s)</span>
+            </span>
+          )}
+
+          {a.doctor_notes && (
+            <span className="px-3 py-1 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-xs font-bold flex items-center gap-1">
+              <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
+              <span>Con notas del doctor</span>
+            </span>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -278,8 +417,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
           </select>
         </div>
 
-        {/* View Selector Tabs */}
-        <div className="grid grid-cols-3 gap-2 p-1.5 bg-slate-200/70 rounded-2xl">
+        {/* View Selector Tabs (Simplified to 2 tabs) */}
+        <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-200/70 rounded-2xl">
           <button
             onClick={() => setViewMode('list')}
             className={`py-3 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2 transition ${
@@ -287,7 +426,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
             }`}
           >
             <ListFilter className="w-4 h-4" />
-            <span>Próximas Citas</span>
+            <span>Próximas Citas ({upcomingAppointments.length})</span>
           </button>
           <button
             onClick={() => setViewMode('calendar')}
@@ -298,147 +437,64 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
             <CalendarIcon className="w-4 h-4" />
             <span>Calendario</span>
           </button>
-          <button
-            onClick={() => setViewMode('exams')}
-            className={`py-3 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2 transition ${
-              viewMode === 'exams' ? 'bg-white text-emerald-600 shadow-md' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            <span>Exámenes IA ({exams.length})</span>
-          </button>
         </div>
 
-        {/* CONTENT VIEW 1: UPCOMING APPOINTMENTS LIST */}
+        {/* CONTENT VIEW 1: UPCOMING APPOINTMENTS & HISTORIAL */}
         {viewMode === 'list' && (
-          <div className="space-y-4">
+          <div className="space-y-6">
             {loading ? (
               <div className="p-8 text-center text-slate-500 font-bold">Cargando citas...</div>
-            ) : appointments.length === 0 ? (
-              <div className="p-10 text-center bg-white rounded-3xl border border-slate-200 space-y-3">
-                <CalendarIcon className="w-12 h-12 text-slate-300 mx-auto" />
-                <p className="text-lg font-bold text-slate-700">No hay citas registradas</p>
-                <p className="text-sm text-slate-500">Toca el botón "+ Cita Médica" para agregar por foto o texto.</p>
-              </div>
             ) : (
-              appointments.map((a) => {
-                const dateObj = new Date(a.date_time);
-                const isFasting = Boolean(a.requires_fasting);
-                const attachedCount = a.attached_results?.length || 0;
+              <>
+                {/* SECTION 1: UPCOMING APPOINTMENTS */}
+                <div className="space-y-4">
+                  <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
+                    <ListFilter className="w-5 h-5 text-blue-600" />
+                    <span>Próximas Citas Pendientes ({upcomingAppointments.length})</span>
+                  </h2>
 
-                return (
-                  <div
-                    key={a.id}
-                    onClick={() => setSelectedAppointmentForDetail(a)}
-                    className="bg-white rounded-3xl border-2 border-slate-100 shadow-sm p-5 space-y-3 hover:shadow-md transition relative overflow-hidden cursor-pointer group"
-                  >
-                    {/* Patient Color Left Bar */}
-                    <div
-                      className="absolute left-0 top-0 bottom-0 w-3"
-                      style={{ backgroundColor: a.patient_color || '#3b82f6' }}
-                    />
+                  {upcomingAppointments.length === 0 ? (
+                    <div className="p-8 text-center bg-white rounded-3xl border border-slate-200 space-y-2">
+                      <CalendarIcon className="w-10 h-10 text-slate-300 mx-auto" />
+                      <p className="text-base font-bold text-slate-700">No hay citas próximas pendientes</p>
+                      <p className="text-xs text-slate-500">Toca el botón "+ Cita Médica" para agregar una nueva cita por foto, PDF o texto.</p>
+                    </div>
+                  ) : (
+                    upcomingAppointments.map((a) => renderAppointmentCard(a, false))
+                  )}
+                </div>
 
-                    <div className="pl-2 flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span
-                            className="px-2.5 py-0.5 rounded-full text-xs font-black text-white"
-                            style={{ backgroundColor: a.patient_color || '#3b82f6' }}
-                          >
-                            {a.patient_name || 'Paciente'}
-                          </span>
-                          <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-bold text-xs uppercase">
-                            {a.appointment_type}
-                          </span>
-                          {a.specialty && (
-                            <span className="px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-800 font-bold text-xs">
-                              {a.specialty}
-                            </span>
-                          )}
+                {/* SECTION 2: PAST APPOINTMENTS HISTORY ACCORDION */}
+                {pastAppointments.length > 0 && (
+                  <div className="pt-4 border-t border-slate-200/80 space-y-4">
+                    <button
+                      onClick={() => setShowPastAppointments(!showPastAppointments)}
+                      className="w-full p-4 bg-white hover:bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between transition text-left"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <History className="w-5 h-5 text-slate-500" />
+                        <div>
+                          <p className="text-base font-bold text-slate-800">
+                            Historial de Citas Pasadas ({pastAppointments.length})
+                          </p>
+                          <p className="text-xs text-slate-500 font-medium">Citas realizadas o fechas transcurridas</p>
                         </div>
-                        <h3 className="text-xl font-black text-slate-900 mt-1 group-hover:text-blue-600 transition">
-                          {a.title}
-                        </h3>
                       </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setAppointmentToEdit(a);
-                            setShowAppointmentModal(true);
-                          }}
-                          className="text-xs font-bold text-slate-500 hover:text-blue-600 bg-slate-100 hover:bg-blue-50 px-3 py-1.5 rounded-xl transition"
-                        >
-                          Editar
-                        </button>
-                        <ChevronRightIcon className="w-5 h-5 text-slate-400 group-hover:translate-x-0.5 transition" />
-                      </div>
-                    </div>
-
-                    {/* Date and Time Banner */}
-                    <div className="pl-2 flex flex-wrap items-center gap-4 text-sm font-bold text-slate-700 bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                      <div className="flex items-center gap-1.5 text-blue-700">
-                        <CalendarIcon className="w-4 h-4" />
-                        <span>
-                          {dateObj.toLocaleDateString('es-ES', {
-                            weekday: 'short',
-                            day: 'numeric',
-                            month: 'long',
-                          })}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-slate-900">
-                        <Clock className="w-4 h-4 text-slate-500" />
-                        <span>
-                          {dateObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Details: Doctor, Location */}
-                    <div className="pl-2 space-y-1.5 text-sm text-slate-600">
-                      {a.specialist && (
-                        <p className="flex items-center gap-2 font-medium">
-                          <User className="w-4 h-4 text-slate-400 shrink-0" />
-                          <span>Especialista: <strong className="text-slate-800">{a.specialist}</strong></span>
-                        </p>
+                      {showPastAppointments ? (
+                        <ChevronUp className="w-5 h-5 text-slate-500" />
+                      ) : (
+                        <ChevronDown className="w-5 h-5 text-slate-500" />
                       )}
-                      {a.location && (
-                        <p className="flex items-center gap-2 font-medium">
-                          <MapPin className="w-4 h-4 text-slate-400 shrink-0" />
-                          <span>Lugar: <strong className="text-slate-800">{a.location}</strong></span>
-                        </p>
-                      )}
-                    </div>
+                    </button>
 
-                    {/* Fasting Warning */}
-                    {isFasting && (
-                      <div className="ml-2 p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 font-extrabold text-sm flex items-center gap-2">
-                        <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-                        <span>⚠️ CITA REQUIERE AYUNO</span>
+                    {showPastAppointments && (
+                      <div className="space-y-4 animate-in fade-in">
+                        {pastAppointments.map((a) => renderAppointmentCard(a, true))}
                       </div>
                     )}
-
-                    {/* Attached Results / Notes Summary Badge */}
-                    <div className="ml-2 flex flex-wrap items-center gap-2 pt-1">
-                      {attachedCount > 0 && (
-                        <span className="px-3 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-1">
-                          <FileText className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>{attachedCount} Resultado(s) adjunto(s)</span>
-                        </span>
-                      )}
-
-                      {a.doctor_notes && (
-                        <span className="px-3 py-1 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-xs font-bold flex items-center gap-1">
-                          <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
-                          <span>Con notas del doctor</span>
-                        </span>
-                      )}
-                    </div>
                   </div>
-                );
-              })
+                )}
+              </>
             )}
           </div>
         )}
@@ -501,72 +557,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
             </div>
           </div>
         )}
-
-        {/* CONTENT VIEW 3: EXAM RESULTS & AI SUMMARIES */}
-        {viewMode === 'exams' && (
-          <div className="space-y-4">
-            <button
-              onClick={() => setShowExamModal(true)}
-              className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2 transition"
-            >
-              <Plus className="w-5 h-5" />
-              <span>Subir Nuevo Resultado de Examen</span>
-            </button>
-
-            {exams.length === 0 ? (
-              <div className="p-10 text-center bg-white rounded-3xl border border-slate-200 space-y-2">
-                <FileText className="w-12 h-12 text-slate-300 mx-auto" />
-                <p className="text-lg font-bold text-slate-700">No hay resultados de exámenes aún</p>
-                <p className="text-xs text-slate-500">Sube PDFs o fotos de laboratorios para generar resúmenes con IA.</p>
-              </div>
-            ) : (
-              exams.map((e) => (
-                <div
-                  key={e.id}
-                  className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm space-y-3 hover:shadow-md transition"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span
-                        className="px-2.5 py-0.5 rounded-full text-xs font-black text-white"
-                        style={{ backgroundColor: e.patient_color || '#3b82f6' }}
-                      >
-                        {e.patient_name}
-                      </span>
-                      <h3 className="text-lg font-extrabold text-slate-900 mt-1">{e.title}</h3>
-                      <p className="text-xs font-semibold text-slate-400">
-                        Subido el {new Date(e.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-
-                    <a
-                      href={e.file_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1"
-                    >
-                      <FileDown className="w-4 h-4" />
-                      <span>Ver Archivo</span>
-                    </a>
-                  </div>
-
-                  {/* AI Summary Card */}
-                  {e.summary_ai && (
-                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-                      <div className="flex items-center gap-2 text-xs font-extrabold text-amber-600">
-                        <Sparkles className="w-4 h-4 fill-amber-500" />
-                        <span>Resumen explicativo generado por Gemini IA:</span>
-                      </div>
-                      <div className="text-sm text-slate-800 whitespace-pre-line leading-relaxed font-medium">
-                        {e.summary_ai}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        )}
       </main>
 
       {/* Floating Action Button (FAB) for New Appointment */}
@@ -605,15 +595,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
             setShowAppointmentModal(false);
             setAppointmentToEdit(null);
           }}
-          onSaved={fetchData}
-        />
-      )}
-
-      {showExamModal && (
-        <ExamModal
-          patients={patients}
-          appointments={appointments}
-          onClose={() => setShowExamModal(false)}
           onSaved={fetchData}
         />
       )}
