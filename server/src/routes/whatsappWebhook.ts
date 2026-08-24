@@ -36,8 +36,14 @@ function checkAndIncrementAiUsage(familyId: string): boolean {
  */
 router.get('/qr', async (req: Request, res: Response) => {
   try {
-    const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
     const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+    const adminKey = req.query.key;
+
+    if (adminKey !== EVOLUTION_API_KEY) {
+      return res.status(401).send('<h2>🛑 Acceso No Autorizado</h2><p>Proporcione la clave secreta de administración en la URL: <code>?key=TU_CLAVE_ADMIN</code></p>');
+    }
+
+    const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
     const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
 
     const response = await fetch(`${EVOLUTION_API_URL}/instance/connect/${INSTANCE_NAME}`, {
