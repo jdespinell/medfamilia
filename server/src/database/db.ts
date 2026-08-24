@@ -51,6 +51,7 @@ export function initDatabase() {
       photo_url TEXT,
       status TEXT NOT NULL DEFAULT 'pendiente', -- 'pendiente', 'completada', 'cancelada'
       google_event_id TEXT,
+      doctor_notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE,
       FOREIGN KEY (patient_id) REFERENCES patients (id) ON DELETE CASCADE
@@ -80,6 +81,13 @@ export function initDatabase() {
       FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE
     );
   `);
+
+  // Safe migration for existing installations
+  try {
+    db.exec('ALTER TABLE appointments ADD COLUMN doctor_notes TEXT;');
+  } catch (e) {
+    // Column already exists
+  }
 
   console.log('Database initialized successfully at:', dbPath);
 }

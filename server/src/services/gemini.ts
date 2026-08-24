@@ -64,20 +64,22 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
 }
 
 /**
- * Extracts structured medical appointment details from an image file using Gemini Vision
+ * Extracts structured medical appointment details from an image or PDF file using Gemini Vision/Document API
  */
-export async function extractAppointmentFromImage(filePath: string, mimeType: string): Promise<ExtractedAppointmentData> {
+export async function extractAppointmentFromFile(filePath: string, mimeType: string): Promise<ExtractedAppointmentData> {
   const ai = getAiInstance();
   const model = getModelName();
   const fileBuffer = fs.readFileSync(filePath);
   const base64Data = fileBuffer.toString('base64');
 
-  const prompt = `
-Analiza la siguiente foto u orden de cita médica / examen impreso o manuscrito. Extrae toda la información de la cita.
+  const actualMimeType = mimeType.includes('pdf') ? 'application/pdf' : (mimeType || 'image/jpeg');
 
-Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura:
+  const prompt = `
+Analiza el siguiente archivo (foto de orden médica o documento PDF). Extrae toda la información de la cita o examen.
+
+Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin comillas de bloque markdown ni texto adicional):
 {
-  "title": "Título corto de la cita o examen",
+  "title": "Título corto de la cita o examen (ej: Consulta Cardiología)",
   "appointment_type": "consulta" | "examen" | "laboratorio" | "procedimiento",
   "specialist": "Nombre del médico, especialista o centro médico",
   "specialty": "Especialidad médica",
@@ -95,7 +97,7 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura:
         {
           inlineData: {
             data: base64Data,
-            mimeType: mimeType || 'image/jpeg',
+            mimeType: actualMimeType,
           },
         },
         { text: prompt },
@@ -106,10 +108,13 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura:
     const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
   } catch (err: any) {
-    console.error(`Error procesando Gemini Vision con modelo [${model}]:`, err);
-    throw new Error(err?.message || `Error analizando la foto con el modelo ${model}`);
+    console.error(`Error procesando archivo con Gemini [${model}]:`, err);
+    throw new Error(err?.message || `Error analizando el archivo con el modelo ${model}`);
   }
 }
+
+// Export alias for backwards compatibility
+export const extractAppointmentFromImage = extractAppointmentFromFile;
 
 /**
  * Summarizes medical exam results (PDF or Image) into senior-friendly clear Spanish.

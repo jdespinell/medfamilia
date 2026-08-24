@@ -14,6 +14,20 @@ export interface Patient {
   google_refresh_token?: string;
 }
 
+export interface ExamResult {
+  id: string;
+  family_id: string;
+  patient_id: string;
+  patient_name?: string;
+  patient_color?: string;
+  appointment_id?: string;
+  title: string;
+  file_url: string;
+  file_type: 'pdf' | 'image';
+  summary_ai?: string;
+  created_at: string;
+}
+
 export interface Appointment {
   id: string;
   family_id: string;
@@ -29,20 +43,8 @@ export interface Appointment {
   requires_fasting: number | boolean;
   prep_instructions?: string;
   photo_url?: string;
+  doctor_notes?: string;
   status: 'pendiente' | 'completada' | 'cancelada';
   google_event_id?: string;
-}
-
-export interface ExamResult {
-  id: string;
-  family_id: string;
-  patient_id: string;
-  patient_name?: string;
-  patient_color?: string;
-  appointment_id?: string;
-  title: string;
-  file_url: string;
-  file_type: 'pdf' | 'image';
-  summary_ai?: string;
-  created_at: string;
+  attached_results?: ExamResult[];
 }

@@ -17,13 +17,16 @@ import {
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
-  FileDown
+  FileDown,
+  MessageSquare,
+  ChevronRight as ChevronRightIcon
 } from 'lucide-react';
 import { apiRequest, removeToken } from '../api';
 import { Family, Patient, Appointment, ExamResult } from '../types';
 import { AppointmentModal } from '../components/AppointmentModal';
 import { ExamModal } from '../components/ExamModal';
 import { PatientsModal } from '../components/PatientsModal';
+import { AppointmentDetailModal } from '../components/AppointmentDetailModal';
 
 interface DashboardProps {
   family: Family;
@@ -46,11 +49,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   // Modals
   const [showAppointmentModal, setShowAppointmentModal] = useState(false);
   const [appointmentToEdit, setAppointmentToEdit] = useState<Appointment | null>(null);
+  const [selectedAppointmentForDetail, setSelectedAppointmentForDetail] = useState<Appointment | null>(null);
   const [showExamModal, setShowExamModal] = useState(false);
   const [showPatientsModal, setShowPatientsModal] = useState(false);
-
-  // Selected Exam for viewing AI summary modal
-  const [selectedExamForSummary, setSelectedExamForSummary] = useState<ExamResult | null>(null);
 
   // Push notification state
   const [pushSubscribed, setPushSubscribed] = useState(false);
@@ -67,6 +68,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
       setPatients(patientsRes);
       setAppointments(appointmentsRes);
       setExams(examsRes);
+
+      // Keep selected detail appointment up to date if open
+      if (selectedAppointmentForDetail) {
+        const updatedSelected = appointmentsRes.find((a: Appointment) => a.id === selectedAppointmentForDetail.id);
+        if (updatedSelected) {
+          setSelectedAppointmentForDetail(updatedSelected);
+        }
+      }
     } catch (err) {
       console.error('Error cargando datos del dashboard:', err);
     } finally {
@@ -93,6 +102,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
       }
 
       const res = await apiRequest('/push/vapid-key');
+      if (!res.publicKey) {
+        alert('Las notificaciones push requieren configurar VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY en el servidor.');
+        return;
+      }
+
       const registration = await navigator.serviceWorker.ready;
 
       const subscription = await registration.pushManager.subscribe({
@@ -278,11 +292,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
               appointments.map((a) => {
                 const dateObj = new Date(a.date_time);
                 const isFasting = Boolean(a.requires_fasting);
+                const attachedCount = a.attached_results?.length || 0;
 
                 return (
                   <div
                     key={a.id}
-                    className="bg-white rounded-3xl border-2 border-slate-100 shadow-sm p-5 space-y-3 hover:shadow-md transition relative overflow-hidden"
+                    onClick={() => setSelectedAppointmentForDetail(a)}
+                    className="bg-white rounded-3xl border-2 border-slate-100 shadow-sm p-5 space-y-3 hover:shadow-md transition relative overflow-hidden cursor-pointer group"
                   >
                     {/* Patient Color Left Bar */}
                     <div
@@ -303,18 +319,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
                             {a.appointment_type}
                           </span>
                         </div>
-                        <h3 className="text-xl font-black text-slate-900 mt-1">{a.title}</h3>
+                        <h3 className="text-xl font-black text-slate-900 mt-1 group-hover:text-blue-600 transition">
+                          {a.title}
+                        </h3>
                       </div>
 
-                      <button
-                        onClick={() => {
-                          setAppointmentToEdit(a);
-                          setShowAppointmentModal(true);
-                        }}
-                        className="text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-xl transition"
-                      >
-                        Editar
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAppointmentToEdit(a);
+                            setShowAppointmentModal(true);
+                          }}
+                          className="text-xs font-bold text-slate-500 hover:text-blue-600 bg-slate-100 hover:bg-blue-50 px-3 py-1.5 rounded-xl transition"
+                        >
+                          Editar
+                        </button>
+                        <ChevronRightIcon className="w-5 h-5 text-slate-400 group-hover:translate-x-0.5 transition" />
+                      </div>
                     </div>
 
                     {/* Date and Time Banner */}
@@ -337,7 +359,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
                       </div>
                     </div>
 
-                    {/* Details: Doctor, Location, Fasting */}
+                    {/* Details: Doctor, Location */}
                     <div className="pl-2 space-y-1.5 text-sm text-slate-600">
                       {a.specialist && (
                         <p className="flex items-center gap-2 font-medium">
@@ -353,7 +375,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
                       )}
                     </div>
 
-                    {/* Senior Warning: Fasting Banner */}
+                    {/* Fasting Warning */}
                     {isFasting && (
                       <div className="ml-2 p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 font-extrabold text-sm flex items-center gap-2">
                         <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
@@ -361,11 +383,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
                       </div>
                     )}
 
-                    {a.prep_instructions && (
-                      <div className="ml-2 p-3 rounded-2xl bg-blue-50 border border-blue-100 text-blue-900 text-xs font-semibold">
-                        💡 <strong>Indicaciones:</strong> {a.prep_instructions}
-                      </div>
-                    )}
+                    {/* Attached Results / Notes Summary Badge */}
+                    <div className="ml-2 flex flex-wrap items-center gap-2 pt-1">
+                      {attachedCount > 0 && (
+                        <span className="px-3 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-1">
+                          <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>{attachedCount} Resultado(s) adjunto(s)</span>
+                        </span>
+                      )}
+
+                      {a.doctor_notes && (
+                        <span className="px-3 py-1 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-xs font-bold flex items-center gap-1">
+                          <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Con notas del doctor</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })
@@ -401,7 +434,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
               {appointments.map((a) => (
                 <div
                   key={a.id}
-                  className="p-3 rounded-2xl border border-slate-100 flex items-center justify-between text-sm"
+                  onClick={() => setSelectedAppointmentForDetail(a)}
+                  className="p-3 rounded-2xl border border-slate-100 flex items-center justify-between text-sm cursor-pointer hover:bg-slate-50 transition"
                   style={{ borderLeftWidth: '6px', borderLeftColor: a.patient_color || '#3b82f6' }}
                 >
                   <div>
@@ -506,6 +540,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
       </div>
 
       {/* Modals */}
+      {selectedAppointmentForDetail && (
+        <AppointmentDetailModal
+          appointment={selectedAppointmentForDetail}
+          onClose={() => setSelectedAppointmentForDetail(null)}
+          onRefresh={fetchData}
+          onEdit={(appToEdit) => {
+            setSelectedAppointmentForDetail(null);
+            setAppointmentToEdit(appToEdit);
+            setShowAppointmentModal(true);
+          }}
+        />
+      )}
+
       {showAppointmentModal && (
         <AppointmentModal
           patients={patients}

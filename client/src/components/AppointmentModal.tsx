@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Camera, Sparkles, AlertTriangle, Calendar as CalendarIcon, Clock, MapPin, UserCheck, CheckCircle2 } from 'lucide-react';
+import { X, Camera, Sparkles, AlertTriangle, CheckCircle2, FileText, Image as ImageIcon, Upload } from 'lucide-react';
 import { apiRequest } from '../api';
 import { Patient, Appointment } from '../types';
 
@@ -24,6 +24,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // AI Inputs
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(appointmentToEdit?.photo_url || null);
+  const [isPdf, setIsPdf] = useState<boolean>(false);
   const [freeText, setFreeText] = useState('');
 
   // Form Fields (Extracted or Manual)
@@ -41,19 +42,27 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [requiresFasting, setRequiresFasting] = useState(Boolean(appointmentToEdit?.requires_fasting));
   const [prepInstructions, setPrepInstructions] = useState(appointmentToEdit?.prep_instructions || '');
   const [photoUrl, setPhotoUrl] = useState(appointmentToEdit?.photo_url || '');
+  const [doctorNotes, setDoctorNotes] = useState(appointmentToEdit?.doctor_notes || '');
 
   // Step 2 Verification Modal flag
   const [isVerified, setIsVerified] = useState(Boolean(appointmentToEdit));
 
-  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setPhotoFile(file);
-      setPreviewPhoto(URL.createObjectURL(file));
+      const isPdfFile = file.type === 'application/pdf' || file.name.endsWith('.pdf');
+      setIsPdf(isPdfFile);
+
+      if (!isPdfFile) {
+        setPreviewPhoto(URL.createObjectURL(file));
+      } else {
+        setPreviewPhoto(null);
+      }
     }
   };
 
-  const handleProcessPhoto = async () => {
+  const handleProcessFile = async () => {
     if (!photoFile) return;
     setLoadingAi(true);
     setError('');
@@ -80,7 +89,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
       setIsVerified(true);
     } catch (err: any) {
-      setError(err.message || 'No se pudo procesar la foto con la IA.');
+      setError(err.message || 'No se pudo procesar el archivo con la IA.');
     } finally {
       setLoadingAi(false);
     }
@@ -131,6 +140,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         requires_fasting: requiresFasting,
         prep_instructions: prepInstructions,
         photo_url: photoUrl,
+        doctor_notes: doctorNotes,
       };
 
       if (appointmentToEdit) {
@@ -188,8 +198,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   tab === 'photo' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <Camera className="w-4 h-4" />
-                <span>Foto IA</span>
+                <Upload className="w-4 h-4" />
+                <span>Foto / PDF IA</span>
               </button>
               <button
                 type="button"
@@ -216,43 +226,56 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             </div>
           )}
 
-          {/* TAB 1: Photo Upload */}
+          {/* TAB 1: Photo / PDF Upload */}
           {tab === 'photo' && !isVerified && (
             <div className="space-y-4 text-center">
-              <div className="border-2 border-dashed border-slate-300 rounded-3xl p-6 hover:border-blue-500 bg-slate-50 transition">
+              <div className="border-2 border-dashed border-slate-300 rounded-3xl p-6 hover:border-blue-500 bg-slate-50 transition cursor-pointer">
                 {previewPhoto ? (
                   <div className="relative group max-h-56 overflow-hidden rounded-2xl">
                     <img src={previewPhoto} alt="Foto Cita" className="w-full h-auto object-cover" />
                   </div>
+                ) : isPdf && photoFile ? (
+                  <div className="flex flex-col items-center gap-2 py-4">
+                    <FileText className="w-16 h-16 text-red-500" />
+                    <p className="text-base font-bold text-slate-900">{photoFile.name}</p>
+                    <p className="text-xs text-slate-500">Documento PDF listo para procesar con IA</p>
+                  </div>
                 ) : (
                   <label className="cursor-pointer flex flex-col items-center gap-3">
-                    <div className="w-16 h-16 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center">
-                      <Camera className="w-8 h-8" />
+                    <div className="flex gap-2">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center">
+                        <Camera className="w-6 h-6" />
+                      </div>
+                      <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center">
+                        <ImageIcon className="w-6 h-6" />
+                      </div>
+                      <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center">
+                        <FileText className="w-6 h-6" />
+                      </div>
                     </div>
                     <div>
-                      <p className="text-base font-bold text-slate-800">Tomar foto o subir recordatorio</p>
-                      <p className="text-xs text-slate-500">Gemini leerá automáticamente la fecha, especialidad y lugar</p>
+                      <p className="text-base font-bold text-slate-800">Tomar foto, elegir de Galería o subir PDF</p>
+                      <p className="text-xs text-slate-500">Gemini leerá automáticamente la fecha, especialidad, médico y lugar</p>
                     </div>
                     <input
                       type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handlePhotoSelect}
+                      accept="image/*,application/pdf"
+                      onChange={handleFileSelect}
                       className="hidden"
                     />
                   </label>
                 )}
               </div>
 
-              {previewPhoto && (
+              {photoFile && (
                 <button
                   type="button"
-                  onClick={handleProcessPhoto}
+                  onClick={handleProcessFile}
                   disabled={loadingAi}
                   className="w-full py-4 text-base font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-2xl shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2 transition disabled:opacity-50"
                 >
                   {loadingAi ? (
-                    <span>Leyendo la foto con Gemini IA...</span>
+                    <span>Procesando archivo con Gemini IA...</span>
                   ) : (
                     <>
                       <Sparkles className="w-5 h-5" />
@@ -431,6 +454,20 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   placeholder="ej. Llevar exámenes anteriores, llegar 20 min antes"
                   value={prepInstructions}
                   onChange={(e) => setPrepInstructions(e.target.value)}
+                  className="w-full p-3.5 text-base rounded-2xl border-2 border-slate-200 focus:border-blue-600 focus:outline-none bg-slate-50"
+                />
+              </div>
+
+              {/* Doctor Notes */}
+              <div>
+                <label className="block text-sm font-bold text-slate-800 mb-1.5">
+                  Notas de la Consulta / Comentarios del Doctor (opcional)
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="ej. El doctor recetó Losartán 50mg cada 12 horas. Volver a control en 3 meses."
+                  value={doctorNotes}
+                  onChange={(e) => setDoctorNotes(e.target.value)}
                   className="w-full p-3.5 text-base rounded-2xl border-2 border-slate-200 focus:border-blue-600 focus:outline-none bg-slate-50"
                 />
               </div>
