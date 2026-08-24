@@ -134,7 +134,10 @@ router.get('/pairing-code', async (req: Request, res: Response) => {
     });
 
     const data = await response.json() as any;
-    const pairingCode = data?.pairingCode || data?.code || data?.qrcode?.pairingCode;
+    let pairingCode = data?.pairingCode || data?.qrcode?.pairingCode;
+    if (!pairingCode && typeof data?.code === 'string' && data.code.length <= 16) {
+      pairingCode = data.code;
+    }
 
     if (pairingCode) {
       return res.send(`
