@@ -1,5 +1,7 @@
 -- MedFamilia SaaS PostgreSQL Schema
 
+CREATE SCHEMA IF NOT EXISTS evolution_api;
+
 CREATE TABLE IF NOT EXISTS families (
   id VARCHAR(64) PRIMARY KEY,
   code VARCHAR(64) UNIQUE NOT NULL,
