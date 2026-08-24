@@ -129,12 +129,29 @@ router.get('/pairing-code', async (req: Request, res: Response) => {
     const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
     const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
 
-    const response = await fetch(`${EVOLUTION_API_URL}/instance/connect/${INSTANCE_NAME}?number=${formattedPhone}`, {
+    let response = await fetch(`${EVOLUTION_API_URL}/instance/connect/${INSTANCE_NAME}?number=${formattedPhone}`, {
       headers: { apikey: EVOLUTION_API_KEY }
     });
 
-    const data = await response.json() as any;
+    let data = await response.json() as any;
     let pairingCode = data?.pairingCode || data?.qrcode?.pairingCode;
+
+    // Si la instancia estaba atascada en modo QR, forzar reinicio para generar pairingCode
+    if (!pairingCode) {
+      await fetch(`${EVOLUTION_API_URL}/instance/restart/${INSTANCE_NAME}`, {
+        method: 'PUT',
+        headers: { apikey: EVOLUTION_API_KEY }
+      }).catch(() => {});
+
+      await new Promise((r) => setTimeout(r, 2000));
+
+      response = await fetch(`${EVOLUTION_API_URL}/instance/connect/${INSTANCE_NAME}?number=${formattedPhone}`, {
+        headers: { apikey: EVOLUTION_API_KEY }
+      });
+      data = await response.json() as any;
+      pairingCode = data?.pairingCode || data?.qrcode?.pairingCode;
+    }
+
     if (!pairingCode && typeof data?.code === 'string' && data.code.length <= 16) {
       pairingCode = data.code;
     }
