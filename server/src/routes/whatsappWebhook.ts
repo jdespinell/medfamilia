@@ -136,20 +136,31 @@ router.get('/pairing-code', async (req: Request, res: Response) => {
     let data = await response.json() as any;
     let pairingCode = data?.pairingCode || data?.qrcode?.pairingCode;
 
-    // Si la instancia estaba atascada en modo QR, forzar reinicio para generar pairingCode
+    // Si la instancia estaba creada en modo QR puro, forzar re-creación con el número telefónico para generar pairingCode
     if (!pairingCode) {
-      await fetch(`${EVOLUTION_API_URL}/instance/restart/${INSTANCE_NAME}`, {
-        method: 'PUT',
+      await fetch(`${EVOLUTION_API_URL}/instance/delete/${INSTANCE_NAME}`, {
+        method: 'DELETE',
         headers: { apikey: EVOLUTION_API_KEY }
       }).catch(() => {});
 
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 1500));
 
-      response = await fetch(`${EVOLUTION_API_URL}/instance/connect/${INSTANCE_NAME}?number=${formattedPhone}`, {
-        headers: { apikey: EVOLUTION_API_KEY }
+      response = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': EVOLUTION_API_KEY
+        },
+        body: JSON.stringify({
+          instanceName: INSTANCE_NAME,
+          number: formattedPhone,
+          integration: 'WHATSAPP-BAILEYS',
+          qrcode: false
+        })
       });
+
       data = await response.json() as any;
-      pairingCode = data?.pairingCode || data?.qrcode?.pairingCode;
+      pairingCode = data?.pairingCode || data?.qrcode?.pairingCode || data?.code;
     }
 
     if (!pairingCode && typeof data?.code === 'string' && data.code.length <= 16) {
