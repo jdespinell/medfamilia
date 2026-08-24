@@ -109,6 +109,74 @@ router.get('/qr', async (req: Request, res: Response) => {
 });
 
 /**
+ * Pairing Code Route (No Camera Needed - Numeric/Text Code)
+ */
+router.get('/pairing-code', async (req: Request, res: Response) => {
+  try {
+    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+    const adminKey = req.query.key;
+    const phone = (req.query.number as string || '').replace(/\D/g, '');
+
+    if (adminKey !== EVOLUTION_API_KEY) {
+      return res.status(401).send('<h2>🛑 Acceso No Autorizado</h2><p>Proporcione la clave secreta en la URL: <code>?key=TU_CLAVE_ADMIN&number=57300...</code></p>');
+    }
+
+    if (!phone) {
+      return res.status(400).send('<h2>⚠️ Falta el número de celular</h2><p>Agregue su número con código de país en la URL: <code>&number=573001234567</code></p>');
+    }
+
+    const formattedPhone = phone.startsWith('57') ? phone : `57${phone}`;
+    const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
+    const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
+
+    const response = await fetch(`${EVOLUTION_API_URL}/instance/connect/${INSTANCE_NAME}?number=${formattedPhone}`, {
+      headers: { apikey: EVOLUTION_API_KEY }
+    });
+
+    const data = await response.json() as any;
+    const pairingCode = data?.pairingCode || data?.code || data?.qrcode?.pairingCode;
+
+    if (pairingCode) {
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Código de Emparejamiento - MedFamilia</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>
+            body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background: #f3f4f6; margin: 0; padding: 20px; text-align: center; }
+            .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 420px; }
+            .code-box { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #1e40af; background: #eff6ff; border: 2px dashed #3b82f6; padding: 15px 20px; border-radius: 12px; margin: 20px 0; font-family: monospace; }
+            h2 { color: #1e40af; margin-top: 0; }
+            ol { text-align: left; color: #374151; font-size: 14px; line-height: 1.6; padding-left: 20px; }
+            .btn { display: inline-block; margin-top: 15px; padding: 10px 20px; background: #2563eb; color: white; border-radius: 8px; text-decoration: none; font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>🩺 Código de Emparejamiento (Sin Cámara)</h2>
+            <p>Escribe este código de 8 caracteres directamente en tu celular:</p>
+            <div class="code-box">${pairingCode}</div>
+            <ol>
+              <li>Abre <b>WhatsApp</b> en tu celular (${formattedPhone}).</li>
+              <li>Ve a <b>Dispositivos vinculados</b> ➔ <b>Vincular un dispositivo</b>.</li>
+              <li>Toca en <b>"Vincular con número de teléfono"</b> abajo en la pantalla.</li>
+              <li>Ingresa el código mostrado arriba.</li>
+            </ol>
+            <a href="javascript:location.reload()" class="btn">🔄 Generar nuevo código</a>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    return res.status(400).send(`<h2>No se pudo generar el código. ¿Ya está vinculado?</h2><p>${JSON.stringify(data)}</p>`);
+  } catch (err: any) {
+    return res.status(500).send(`<h2>Error generando código:</h2><p>${err.message}</p>`);
+  }
+});
+
+/**
  * Webhook Endpoint para recibir eventos y mensajes entrantes de Evolution API
  */
 router.post('/webhook', async (req: Request, res: Response) => {
