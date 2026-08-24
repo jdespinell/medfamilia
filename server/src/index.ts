@@ -10,6 +10,7 @@ import appointmentRoutes from './routes/appointments.js';
 import examRoutes from './routes/exams.js';
 import calendarRoutes from './routes/calendar.js';
 import pushRoutes from './routes/push.js';
+import specialtyRoutes from './routes/specialties.js';
 
 dotenv.config();
 
@@ -37,6 +38,7 @@ app.use('/api/appointments', appointmentRoutes);
 app.use('/api/exams', examRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/push', pushRoutes);
+app.use('/api/specialties', specialtyRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

@@ -19,10 +19,12 @@ import {
   CheckCircle2,
   FileDown,
   MessageSquare,
+  Filter,
+  Stethoscope,
   ChevronRight as ChevronRightIcon
 } from 'lucide-react';
 import { apiRequest, removeToken } from '../api';
-import { Family, Patient, Appointment, ExamResult } from '../types';
+import { Family, Patient, Appointment, ExamResult, Specialty } from '../types';
 import { AppointmentModal } from '../components/AppointmentModal';
 import { ExamModal } from '../components/ExamModal';
 import { PatientsModal } from '../components/PatientsModal';
@@ -35,7 +37,9 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [specialtiesList, setSpecialtiesList] = useState<Specialty[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string>('all');
+  const [selectedSpecialty, setSelectedSpecialty] = useState<string>('all');
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [exams, setExams] = useState<ExamResult[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,12 +60,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   // Push notification state
   const [pushSubscribed, setPushSubscribed] = useState(false);
 
+  useEffect(() => {
+    apiRequest('/specialties')
+      .then((data) => setSpecialtiesList(data))
+      .catch((err) => console.error('Error cargando especialidades:', err));
+  }, []);
+
   const fetchData = async () => {
     setLoading(true);
     try {
       const [patientsRes, appointmentsRes, examsRes] = await Promise.all([
         apiRequest('/patients'),
-        apiRequest(`/appointments?patient_id=${selectedPatientId}`),
+        apiRequest(`/appointments?patient_id=${selectedPatientId}&specialty=${selectedSpecialty}`),
         apiRequest(`/exams?patient_id=${selectedPatientId}`),
       ]);
 
@@ -85,7 +95,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
 
   useEffect(() => {
     fetchData();
-  }, [selectedPatientId]);
+  }, [selectedPatientId, selectedSpecialty]);
 
   // Request Push Notifications
   const handleEnablePush = async () => {
@@ -148,6 +158,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
 
       text += `📌 *${a.title}* (${patient?.name || 'Paciente'})\n`;
       text += `📅 ${dateStr}\n`;
+      if (a.specialty) text += `🏷️ Especialidad: ${a.specialty}\n`;
       if (a.specialist) text += `👨‍⚕️ ${a.specialist}\n`;
       if (a.location) text += `🏥 ${a.location}\n`;
       if (a.requires_fasting) text += `⚠️ *REQUIERE AYUNO*\n`;
@@ -246,6 +257,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
           </button>
         </div>
 
+        {/* Specialty Filter Dropdown Bar */}
+        <div className="bg-white px-4 py-2.5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-600 shrink-0">
+            <Stethoscope className="w-4 h-4 text-blue-600" />
+            <span>Especialidad:</span>
+          </div>
+
+          <select
+            value={selectedSpecialty}
+            onChange={(e) => setSelectedSpecialty(e.target.value)}
+            className="w-full text-xs font-extrabold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none focus:border-blue-600"
+          >
+            <option value="all">Todas las Especialidades ({appointments.length})</option>
+            {specialtiesList.map((s) => (
+              <option key={s.id} value={s.name}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* View Selector Tabs */}
         <div className="grid grid-cols-3 gap-2 p-1.5 bg-slate-200/70 rounded-2xl">
           <button
@@ -308,7 +340,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
 
                     <div className="pl-2 flex items-start justify-between gap-3">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span
                             className="px-2.5 py-0.5 rounded-full text-xs font-black text-white"
                             style={{ backgroundColor: a.patient_color || '#3b82f6' }}
@@ -318,6 +350,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
                           <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-bold text-xs uppercase">
                             {a.appointment_type}
                           </span>
+                          {a.specialty && (
+                            <span className="px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-800 font-bold text-xs">
+                              {a.specialty}
+                            </span>
+                          )}
                         </div>
                         <h3 className="text-xl font-black text-slate-900 mt-1 group-hover:text-blue-600 transition">
                           {a.title}
@@ -439,7 +476,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
                   style={{ borderLeftWidth: '6px', borderLeftColor: a.patient_color || '#3b82f6' }}
                 >
                   <div>
-                    <p className="font-bold text-slate-900">{a.title}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-bold text-slate-900">{a.title}</p>
+                      {a.specialty && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-bold">
+                          {a.specialty}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-slate-500 font-semibold">
                       {new Date(a.date_time).toLocaleString('es-ES', {
                         day: 'numeric',

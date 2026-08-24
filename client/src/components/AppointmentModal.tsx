@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { X, Camera, Sparkles, AlertTriangle, CheckCircle2, FileText, Image as ImageIcon, Upload } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Camera, Sparkles, AlertTriangle, CheckCircle2, FileText, Image as ImageIcon, Upload, Plus } from 'lucide-react';
 import { apiRequest } from '../api';
-import { Patient, Appointment } from '../types';
+import { Patient, Appointment, Specialty } from '../types';
 
 interface AppointmentModalProps {
   patients: Patient[];
@@ -20,6 +20,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [loadingAi, setLoadingAi] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // Specialties
+  const [specialtiesList, setSpecialtiesList] = useState<Specialty[]>([]);
+  const [isAddingNewSpecialty, setIsAddingNewSpecialty] = useState(false);
+  const [newSpecialtyName, setNewSpecialtyName] = useState('');
 
   // AI Inputs
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -46,6 +51,28 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   // Step 2 Verification Modal flag
   const [isVerified, setIsVerified] = useState(Boolean(appointmentToEdit));
+
+  useEffect(() => {
+    apiRequest('/specialties')
+      .then((data) => setSpecialtiesList(data))
+      .catch((err) => console.error('Error cargando especialidades:', err));
+  }, []);
+
+  const handleCreateCustomSpecialty = async () => {
+    if (!newSpecialtyName.trim()) return;
+    try {
+      const res = await apiRequest('/specialties', {
+        method: 'POST',
+        body: JSON.stringify({ name: newSpecialtyName }),
+      });
+      setSpecialtiesList([...specialtiesList, res]);
+      setSpecialty(res.name);
+      setIsAddingNewSpecialty(false);
+      setNewSpecialtyName('');
+    } catch (err: any) {
+      alert(err.message || 'Error guardando especialidad.');
+    }
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -361,6 +388,52 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   onChange={(e) => setTitle(e.target.value)}
                   className="w-full p-3.5 text-base rounded-2xl border-2 border-slate-200 focus:border-blue-600 focus:outline-none bg-slate-50 font-semibold"
                 />
+              </div>
+
+              {/* Medical Specialty / Specialist Category */}
+              <div>
+                <label className="block text-sm font-bold text-slate-800 mb-1.5">
+                  Especialidad Médica / Categoría (opcional)
+                </label>
+                <select
+                  value={isAddingNewSpecialty ? '__add_new__' : specialty}
+                  onChange={(e) => {
+                    if (e.target.value === '__add_new__') {
+                      setIsAddingNewSpecialty(true);
+                    } else {
+                      setIsAddingNewSpecialty(false);
+                      setSpecialty(e.target.value);
+                    }
+                  }}
+                  className="w-full p-3.5 text-base rounded-2xl border-2 border-slate-200 focus:border-blue-600 focus:outline-none bg-slate-50 font-semibold"
+                >
+                  <option value="">Sin especialidad / No especificada</option>
+                  {specialtiesList.map((s) => (
+                    <option key={s.id} value={s.name}>
+                      {s.name}
+                    </option>
+                  ))}
+                  <option value="__add_new__">+ Agregar nueva especialidad...</option>
+                </select>
+
+                {isAddingNewSpecialty && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <input
+                      type="text"
+                      placeholder="Nombre de la nueva especialidad (ej. Reumatología)"
+                      value={newSpecialtyName}
+                      onChange={(e) => setNewSpecialtyName(e.target.value)}
+                      className="w-full p-3 text-sm rounded-xl border-2 border-blue-300 font-semibold"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCreateCustomSpecialty}
+                      className="px-4 py-3 rounded-xl bg-blue-600 text-white font-bold text-xs shrink-0 shadow-md shadow-blue-500/20"
+                    >
+                      Guardar
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Appointment Type */}

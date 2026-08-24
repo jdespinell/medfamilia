@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { v4 as uuidv4 } from 'uuid';
 
 const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 if (!fs.existsSync(dataDir)) {
@@ -13,6 +14,24 @@ const db = new Database(dbPath);
 // Enable WAL mode for high concurrency
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+
+export const DEFAULT_SPECIALTIES = [
+  'Medicina General',
+  'Cardiología',
+  'Oftalmología',
+  'Dermatología',
+  'Odontología',
+  'Traumatología / Ortopedia',
+  'Neurología',
+  'Endocrinología',
+  'Gastroenterología',
+  'Ginecología / Urología',
+  'Neumología',
+  'Otorrinolaringología',
+  'Nutrición',
+  'Radiología / Imágenes',
+  'Laboratorio Clínico',
+];
 
 export function initDatabase() {
   db.exec(`
@@ -80,6 +99,13 @@ export function initDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS specialties (
+      id TEXT PRIMARY KEY,
+      family_id TEXT, -- NULL for system defaults
+      name TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Safe migration for existing installations
@@ -87,6 +113,15 @@ export function initDatabase() {
     db.exec('ALTER TABLE appointments ADD COLUMN doctor_notes TEXT;');
   } catch (e) {
     // Column already exists
+  }
+
+  // Populate default system specialties if empty
+  const count = (db.prepare('SELECT COUNT(*) as cnt FROM specialties WHERE family_id IS NULL').get() as any)?.cnt;
+  if (count === 0) {
+    const insertStmt = db.prepare('INSERT INTO specialties (id, family_id, name) VALUES (?, NULL, ?)');
+    for (const spec of DEFAULT_SPECIALTIES) {
+      insertStmt.run([uuidv4(), spec]);
+    }
   }
 
   console.log('Database initialized successfully at:', dbPath);

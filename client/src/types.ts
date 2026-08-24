@@ -14,6 +14,12 @@ export interface Patient {
   google_refresh_token?: string;
 }
 
+export interface Specialty {
+  id: string;
+  family_id?: string;
+  name: string;
+}
+
 export interface ExamResult {
   id: string;
   family_id: string;

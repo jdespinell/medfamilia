@@ -32,7 +32,7 @@ router.use(authMiddleware);
 // Get list of appointments (including attached results)
 router.get('/', (req: AuthRequest, res) => {
   const familyId = req.family!.id;
-  const { patient_id } = req.query;
+  const { patient_id, specialty } = req.query;
 
   let query = `
     SELECT a.*, p.name as patient_name, p.color as patient_color
@@ -45,6 +45,11 @@ router.get('/', (req: AuthRequest, res) => {
   if (patient_id && patient_id !== 'all') {
     query += ` AND a.patient_id = ?`;
     params.push(patient_id);
+  }
+
+  if (specialty && specialty !== 'all') {
+    query += ` AND a.specialty = ?`;
+    params.push(specialty);
   }
 
   query += ` ORDER BY a.date_time ASC`;
