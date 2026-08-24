@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Camera, Sparkles, AlertTriangle, CheckCircle2, FileText, Image as ImageIcon, Upload, Plus } from 'lucide-react';
 import { apiRequest } from '../api';
 import { Patient, Appointment, Specialty } from '../types';
@@ -20,6 +20,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [loadingAi, setLoadingAi] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // File Input Refs
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   // Specialties
   const [specialtiesList, setSpecialtiesList] = useState<Specialty[]>([]);
@@ -253,63 +258,124 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             </div>
           )}
 
-          {/* TAB 1: Photo / PDF Upload */}
+          {/* TAB 1: Photo / Gallery / PDF Upload */}
           {tab === 'photo' && !isVerified && (
-            <div className="space-y-4 text-center">
-              <div className="border-2 border-dashed border-slate-300 rounded-3xl p-6 hover:border-blue-500 bg-slate-50 transition cursor-pointer">
-                {previewPhoto ? (
-                  <div className="relative group max-h-56 overflow-hidden rounded-2xl">
-                    <img src={previewPhoto} alt="Foto Cita" className="w-full h-auto object-cover" />
-                  </div>
-                ) : isPdf && photoFile ? (
-                  <div className="flex flex-col items-center gap-2 py-4">
-                    <FileText className="w-16 h-16 text-red-500" />
-                    <p className="text-base font-bold text-slate-900">{photoFile.name}</p>
-                    <p className="text-xs text-slate-500">Documento PDF listo para procesar con IA</p>
-                  </div>
-                ) : (
-                  <label className="cursor-pointer flex flex-col items-center gap-3">
-                    <div className="flex gap-2">
-                      <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center">
+            <div className="space-y-4">
+              {/* Preview if already selected */}
+              {previewPhoto ? (
+                <div className="relative group max-h-56 overflow-hidden rounded-2xl border-2 border-blue-500 text-center">
+                  <img src={previewPhoto} alt="Foto Cita" className="w-full h-auto object-cover max-h-52 mx-auto" />
+                  <p className="p-2 text-xs font-bold text-slate-600 bg-slate-100">{photoFile?.name}</p>
+                </div>
+              ) : isPdf && photoFile ? (
+                <div className="flex flex-col items-center gap-2 p-6 rounded-2xl bg-red-50 border-2 border-red-200 text-center">
+                  <FileText className="w-14 h-14 text-red-500" />
+                  <p className="text-base font-bold text-slate-900">{photoFile.name}</p>
+                  <p className="text-xs text-slate-500">Documento PDF listo para procesar con IA</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm font-bold text-slate-800 text-center">
+                    Selecciona una opción para extraer los datos de la cita:
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* Camera */}
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="p-4 rounded-2xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-900 flex flex-col items-center gap-2 transition active:scale-95"
+                    >
+                      <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20">
                         <Camera className="w-6 h-6" />
                       </div>
-                      <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center">
+                      <span className="font-extrabold text-sm">Tomar Foto</span>
+                      <span className="text-[10px] text-blue-700">Abrir Cámara</span>
+                    </button>
+
+                    {/* Gallery */}
+                    <button
+                      type="button"
+                      onClick={() => galleryInputRef.current?.click()}
+                      className="p-4 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 flex flex-col items-center gap-2 transition active:scale-95"
+                    >
+                      <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-md shadow-amber-500/20">
                         <ImageIcon className="w-6 h-6" />
                       </div>
-                      <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center">
+                      <span className="font-extrabold text-sm">Galería</span>
+                      <span className="text-[10px] text-amber-700">Elegir de Fotos</span>
+                    </button>
+
+                    {/* PDF Document */}
+                    <button
+                      type="button"
+                      onClick={() => pdfInputRef.current?.click()}
+                      className="p-4 rounded-2xl bg-red-50 hover:bg-red-100 border border-red-200 text-red-900 flex flex-col items-center gap-2 transition active:scale-95"
+                    >
+                      <div className="w-12 h-12 rounded-2xl bg-red-600 text-white flex items-center justify-center shadow-md shadow-red-500/20">
                         <FileText className="w-6 h-6" />
                       </div>
-                    </div>
-                    <div>
-                      <p className="text-base font-bold text-slate-800">Tomar foto, elegir de Galería o subir PDF</p>
-                      <p className="text-xs text-slate-500">Gemini leerá automáticamente la fecha, especialidad, médico y lugar</p>
-                    </div>
-                    <input
-                      type="file"
-                      accept="image/*,application/pdf"
-                      onChange={handleFileSelect}
-                      className="hidden"
-                    />
-                  </label>
-                )}
-              </div>
+                      <span className="font-extrabold text-sm">Documento PDF</span>
+                      <span className="text-[10px] text-red-700">Archivos PDF</span>
+                    </button>
+                  </div>
+
+                  {/* Hidden inputs */}
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                  <input
+                    ref={galleryInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                  <input
+                    ref={pdfInputRef}
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                </div>
+              )}
 
               {photoFile && (
-                <button
-                  type="button"
-                  onClick={handleProcessFile}
-                  disabled={loadingAi}
-                  className="w-full py-4 text-base font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-2xl shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2 transition disabled:opacity-50"
-                >
-                  {loadingAi ? (
-                    <span>Procesando archivo con Gemini IA...</span>
-                  ) : (
-                    <>
-                      <Sparkles className="w-5 h-5" />
-                      <span>Extraer Datos con Inteligencia Artificial</span>
-                    </>
-                  )}
-                </button>
+                <div className="space-y-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleProcessFile}
+                    disabled={loadingAi}
+                    className="w-full py-4 text-base font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-2xl shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2 transition disabled:opacity-50"
+                  >
+                    {loadingAi ? (
+                      <span>Procesando archivo con Gemini IA...</span>
+                    ) : (
+                      <>
+                        <Sparkles className="w-5 h-5" />
+                        <span>Extraer Datos con Inteligencia Artificial</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPhotoFile(null);
+                      setPreviewPhoto(null);
+                      setIsPdf(false);
+                    }}
+                    className="w-full py-2 text-xs font-bold text-slate-500 hover:text-slate-800"
+                  >
+                    Cambiar archivo seleccionado
+                  </button>
+                </div>
               )}
             </div>
           )}

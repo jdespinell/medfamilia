@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   X,
   Calendar,
@@ -15,7 +15,9 @@ import {
   ExternalLink,
   MessageSquare,
   Save,
-  Plus
+  Plus,
+  Camera,
+  Image as ImageIcon
 } from 'lucide-react';
 import { apiRequest } from '../api';
 import { Appointment, ExamResult } from '../types';
@@ -36,6 +38,11 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   const [doctorNotes, setDoctorNotes] = useState(appointment.doctor_notes || '');
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSuccess, setNotesSuccess] = useState(false);
+
+  // File Input Refs
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   // Upload results modal state inside detail view
   const [showUploadResult, setShowUploadResult] = useState(false);
@@ -62,6 +69,12 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
       alert(err.message || 'Error guardando notas de la consulta.');
     } finally {
       setSavingNotes(false);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setResultFile(e.target.files[0]);
     }
   };
 
@@ -259,20 +272,70 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
                   className="w-full p-3 text-sm rounded-xl border border-emerald-200 bg-white font-semibold"
                 />
 
-                <div className="border border-dashed border-emerald-300 rounded-xl p-4 bg-white text-center cursor-pointer">
-                  <label className="cursor-pointer flex flex-col items-center gap-1">
-                    <Upload className="w-6 h-6 text-emerald-600" />
-                    <span className="text-xs font-bold text-slate-700">
-                      {resultFile ? resultFile.name : 'Seleccionar PDF o Foto de Examen'}
-                    </span>
-                    <input
-                      type="file"
-                      accept="application/pdf,image/*"
-                      onChange={(e) => e.target.files && setResultFile(e.target.files[0])}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
+                {/* 3 Explicit Buttons for Camera, Gallery, or PDF */}
+                {resultFile ? (
+                  <div className="p-3 bg-white border border-emerald-300 rounded-xl flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800">{resultFile.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setResultFile(null)}
+                      className="text-xs text-red-600 font-bold hover:underline"
+                    >
+                      Cambiar
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="p-3 rounded-xl bg-white border border-emerald-200 text-emerald-900 flex flex-col items-center gap-1 transition active:scale-95"
+                    >
+                      <Camera className="w-5 h-5 text-emerald-600" />
+                      <span className="font-bold text-xs">Cámara</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => galleryInputRef.current?.click()}
+                      className="p-3 rounded-xl bg-white border border-emerald-200 text-emerald-900 flex flex-col items-center gap-1 transition active:scale-95"
+                    >
+                      <ImageIcon className="w-5 h-5 text-emerald-600" />
+                      <span className="font-bold text-xs">Galería</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => pdfInputRef.current?.click()}
+                      className="p-3 rounded-xl bg-white border border-emerald-200 text-emerald-900 flex flex-col items-center gap-1 transition active:scale-95"
+                    >
+                      <FileText className="w-5 h-5 text-emerald-600" />
+                      <span className="font-bold text-xs">PDF</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Hidden Inputs */}
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <input
+                  ref={galleryInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <input
+                  ref={pdfInputRef}
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
 
                 <div className="flex items-center justify-end gap-2 pt-1">
                   <button
