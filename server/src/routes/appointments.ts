@@ -1,30 +1,12 @@
 import { Router } from 'express';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../database/db.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { secureUpload } from '../middleware/upload.js';
+import { aiRateLimiter } from '../middleware/rateLimiter.js';
 import { extractAppointmentFromText, extractAppointmentFromFile } from '../services/gemini.js';
 import { syncAppointmentToGoogleCalendar } from '../services/googleCalendar.js';
 import { sendNotificationToFamily } from '../services/pushNotifications.js';
-
-const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `appointment-${Date.now()}-${uuidv4()}${ext}`);
-  },
-});
-
-const upload = multer({ storage });
 
 const router = Router();
 router.use(authMiddleware);
@@ -66,7 +48,7 @@ router.get('/', (req: AuthRequest, res) => {
 });
 
 // AI Processing: Extract appointment info from Text
-router.post('/ai-text', async (req: AuthRequest, res) => {
+router.post('/ai-text', aiRateLimiter, async (req: AuthRequest, res) => {
   try {
     const { text } = req.body;
     if (!text || text.trim().length === 0) {
@@ -82,7 +64,7 @@ router.post('/ai-text', async (req: AuthRequest, res) => {
 });
 
 // AI Processing: Upload photo or PDF & Extract appointment info with Gemini
-router.post('/ai-photo', upload.single('photo'), async (req: AuthRequest, res) => {
+router.post('/ai-photo', aiRateLimiter, secureUpload.single('photo'), async (req: AuthRequest, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No se subió ningún archivo.' });

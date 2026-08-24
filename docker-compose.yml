@@ -1,17 +1,59 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: medfamilia-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-medfamilia_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-medfamilia_secure_pass_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-medfamilia}
+    ports:
+      - "127.0.0.1:5433:5432" # Puerto 5433 libre (el 5432 ya está ocupado por fashion-assistant)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./server/src/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medfamilia_user} -d ${POSTGRES_DB:-medfamilia}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  evolution-api:
+    image: atendai/evolution-api:v2.1.1
+    container_name: medfamilia-evolution-api
+    restart: unless-stopped
+    ports:
+      - "8085:8080" # Puerto 8085 libre (el 8080 está ocupado por finanzas y 8081 por nginx)
+    environment:
+      - SERVER_URL=http://localhost:8085
+      - DOCKER_ENV=true
+      - AUTHENTICATION_TYPE=apikey
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-medfamilia_whatsapp_key_2026}
+      - DATABASE_ENABLED=false
+      - LOG_LEVEL=ERROR
+    volumes:
+      - evolution_instances:/evolution/instances
+
   medfamilia:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: medfamilia-app
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
-      - "${PORT:-3001}:3000"
+      - "3001:3000" # Consistente con tu puerto actual de MedFamilia (3001)
     environment:
       - PORT=3000
       - NODE_ENV=production
+      - DATABASE_URL=postgres://${POSTGRES_USER:-medfamilia_user}:${POSTGRES_PASSWORD:-medfamilia_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-medfamilia}
+      - EVOLUTION_API_URL=http://evolution-api:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-medfamilia_whatsapp_key_2026}
+      - EVOLUTION_INSTANCE_NAME=medfamilia-wa
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-1.5-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-}
@@ -23,6 +65,10 @@ services:
       - medfamilia_uploads:/app/uploads
 
 volumes:
+  postgres_data:
+    driver: local
+  evolution_instances:
+    driver: local
   medfamilia_data:
     driver: local
   medfamilia_uploads:
