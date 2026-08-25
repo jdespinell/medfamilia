@@ -1,9 +1,19 @@
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+
+// Load .env variables before importing application modules
+dotenv.config();
+if (fs.existsSync(path.join(process.cwd(), 'server/.env'))) {
+  dotenv.config({ path: path.join(process.cwd(), 'server/.env') });
+}
+if (fs.existsSync(path.join(process.cwd(), '../.env'))) {
+  dotenv.config({ path: path.join(process.cwd(), '../.env') });
+}
+
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
 import db, { initDatabase } from './database/db.js';
 import authRoutes from './routes/auth.js';
 import patientRoutes from './routes/patients.js';
@@ -18,8 +28,6 @@ import adminRoutes from './routes/admin.js';
 import { authMiddleware, AuthRequest } from './middleware/auth.js';
 import { authRateLimiter, generalRateLimiter } from './middleware/rateLimiter.js';
 import { ensureWhatsAppWebhook } from './services/whatsapp.js';
-
-dotenv.config();
 
 // Initialize Database
 initDatabase();
