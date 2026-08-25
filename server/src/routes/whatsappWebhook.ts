@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { sendWhatsAppMessage } from '../services/whatsapp.js';
+import { sendWhatsAppMessage, ensureWhatsAppWebhook } from '../services/whatsapp.js';
 import { extractAppointmentFromText } from '../services/gemini.js';
 import db from '../database/db.js';
 
@@ -72,6 +72,7 @@ router.get('/status', async (req: Request, res: Response) => {
           .close { background: #fee2e2; color: #b91c1c; }
           .connecting { background: #fef3c7; color: #b45309; }
           .btn { display: inline-block; margin-top: 15px; padding: 10px 20px; background: #2563eb; color: white; border-radius: 8px; text-decoration: none; font-weight: bold; }
+          .btn-danger { background: #dc2626; margin-left: 10px; }
         </style>
       </head>
       <body>
@@ -79,13 +80,86 @@ router.get('/status', async (req: Request, res: Response) => {
           <h2>🩺 Estado de WhatsApp</h2>
           <div class="status ${state}">${state === 'open' ? '✅ CONECTADO Y ACTIVO' : state === 'connecting' ? '🔄 CONECTANDO...' : '🛑 DESCONECTADO'}</div>
           <p>Estado actual de la sesión: <b>${state}</b></p>
-          ${state !== 'open' ? '<a href="/api/whatsapp/pairing-code?key=' + EVOLUTION_API_KEY + '&number=573001234567" class="btn">📲 Vincular Nuevamente</a>' : ''}
+          ${state !== 'open' ? '<a href="/api/whatsapp/pairing-code?key=' + EVOLUTION_API_KEY + '&number=573001234567" class="btn">📲 Vincular Nuevamente</a> <a href="/api/whatsapp/reset?key=' + EVOLUTION_API_KEY + '" class="btn btn-danger">🧹 Limpiar Sesión</a>' : ''}
         </div>
       </body>
       </html>
     `);
   } catch (err: any) {
     return res.status(500).send(`<h2>Error consultando estado:</h2><p>${err.message}</p>`);
+  }
+});
+
+/**
+ * Clean Reset Instance Route (Purges stale Baileys session keys)
+ */
+router.get('/reset', async (req: Request, res: Response) => {
+  try {
+    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+    const adminKey = req.query.key;
+
+    if (adminKey !== EVOLUTION_API_KEY) {
+      return res.status(401).send('<h2>🛑 Acceso No Autorizado</h2>');
+    }
+
+    const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
+    const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
+
+    // 1. Logout & Delete old instance session
+    await fetch(`${EVOLUTION_API_URL}/instance/logout/${INSTANCE_NAME}`, {
+      method: 'DELETE',
+      headers: { apikey: EVOLUTION_API_KEY }
+    }).catch(() => {});
+
+    await fetch(`${EVOLUTION_API_URL}/instance/delete/${INSTANCE_NAME}`, {
+      method: 'DELETE',
+      headers: { apikey: EVOLUTION_API_KEY }
+    }).catch(() => {});
+
+    await new Promise((r) => setTimeout(r, 2000));
+
+    // 2. Re-create clean instance
+    await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': EVOLUTION_API_KEY
+      },
+      body: JSON.stringify({
+        instanceName: INSTANCE_NAME,
+        integration: 'WHATSAPP-BAILEYS',
+        qrcode: true
+      })
+    });
+
+    // 3. Re-configure webhook
+    await ensureWhatsAppWebhook();
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Reset Exitoso - MedFamilia</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background: #f3f4f6; margin: 0; padding: 20px; text-align: center; }
+          .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 420px; }
+          h2 { color: #059669; margin-top: 0; }
+          p { color: #4b5563; font-size: 14px; line-height: 1.5; }
+          .btn { display: inline-block; margin-top: 15px; padding: 12px 24px; background: #2563eb; color: white; border-radius: 8px; text-decoration: none; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>✅ Sesión Limpiada Correctamente</h2>
+          <p>Se eliminaron las claves temporales viejas que causaban el conflicto de conexión en WhatsApp.</p>
+          <a href="/api/whatsapp/pairing-code?key=${EVOLUTION_API_KEY}&number=573001234567" class="btn">📲 Generar Nuevo Código</a>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err: any) {
+    return res.status(500).send(`<h2>Error reiniciando:</h2><p>${err.message}</p>`);
   }
 });
 
