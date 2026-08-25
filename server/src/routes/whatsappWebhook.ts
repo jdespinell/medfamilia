@@ -37,6 +37,59 @@ function checkAndIncrementAiUsage(familyId: string): boolean {
 }
 
 /**
+ * Connection Status Route
+ */
+router.get('/status', async (req: Request, res: Response) => {
+  try {
+    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+    const adminKey = req.query.key;
+
+    if (adminKey !== EVOLUTION_API_KEY) {
+      return res.status(401).json({ error: 'Acceso no autorizado.' });
+    }
+
+    const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
+    const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
+
+    const response = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${INSTANCE_NAME}`, {
+      headers: { apikey: EVOLUTION_API_KEY }
+    });
+
+    const data = await response.json() as any;
+    const state = data?.instance?.state || data?.state || 'unknown';
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Estado de WhatsApp - MedFamilia</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background: #f3f4f6; margin: 0; padding: 20px; text-align: center; }
+          .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 400px; }
+          .status { font-size: 20px; font-weight: bold; padding: 10px 20px; border-radius: 8px; margin: 15px 0; text-transform: uppercase; }
+          .open { background: #dcfce7; color: #15803d; }
+          .close { background: #fee2e2; color: #b91c1c; }
+          .connecting { background: #fef3c7; color: #b45309; }
+          .btn { display: inline-block; margin-top: 15px; padding: 10px 20px; background: #2563eb; color: white; border-radius: 8px; text-decoration: none; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>🩺 Estado de WhatsApp</h2>
+          <div class="status ${state}">${state === 'open' ? '✅ CONECTADO Y ACTIVO' : state === 'connecting' ? '🔄 CONECTANDO...' : '🛑 DESCONECTADO'}</div>
+          <p>Estado actual de la sesión: <b>${state}</b></p>
+          ${state !== 'open' ? '<a href="/api/whatsapp/pairing-code?key=' + EVOLUTION_API_KEY + '&number=573001234567" class="btn">📲 Vincular Nuevamente</a>' : ''}
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err: any) {
+    return res.status(500).send(`<h2>Error consultando estado:</h2><p>${err.message}</p>`);
+  }
+});
+
+/**
  * Visual QR Display Route for scanning WhatsApp in browser
  */
 router.get('/qr', async (req: Request, res: Response) => {
