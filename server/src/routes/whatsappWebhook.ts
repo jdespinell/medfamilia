@@ -137,7 +137,6 @@ router.get('/pairing-code', async (req: Request, res: Response) => {
     let data = await response.json() as any;
     let pairingCode = data?.pairingCode || data?.qrcode?.pairingCode;
 
-    // Si la instancia estaba creada en modo QR puro, forzar re-creación con el número telefónico para generar pairingCode
     if (!pairingCode) {
       await fetch(`${EVOLUTION_API_URL}/instance/delete/${INSTANCE_NAME}`, {
         method: 'DELETE',
@@ -214,15 +213,8 @@ router.get('/pairing-code', async (req: Request, res: Response) => {
  */
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
-    // Validate Webhook Token Header
-    const token = (req.headers['x-webhook-token'] || req.headers['apikey'] || req.query.token) as string;
-    const expectedToken = process.env.WHATSAPP_WEBHOOK_SECRET || process.env.EVOLUTION_API_KEY;
-
-    if (expectedToken && token !== expectedToken) {
-      return res.status(401).json({ error: 'Acceso no autorizado al Webhook.' });
-    }
-
     const eventData = req.body;
+    console.log('📩 [WhatsApp Webhook] Mensaje recibido:', JSON.stringify(eventData));
 
     if (eventData?.event === 'messages.upsert') {
       const messageObj = eventData.data;
@@ -237,6 +229,8 @@ router.post('/webhook', async (req: Request, res: Response) => {
       const formattedPhone = senderPhone.startsWith('57') ? senderPhone : `57${senderPhone}`;
       const userText = messageObj?.message?.conversation || messageObj?.message?.extendedTextMessage?.text;
 
+      console.log(`💬 Mensaje de ${formattedPhone}: "${userText}"`);
+
       // Lookup family by multi-number table or main family phone
       let familyMatch = db.prepare('SELECT family_id FROM family_whatsapp_numbers WHERE phone_number = ?').get(formattedPhone) as any;
       if (!familyMatch) {
@@ -245,6 +239,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
       if (!familyMatch) {
         if (userText) {
+          console.log(`⚠️ Número ${formattedPhone} no registrado en MedFamilia.`);
           await sendWhatsAppMessage(
             senderPhone,
             `👋 *¡Hola! MedFamilia le da la bienvenida.*\n\nEste número de WhatsApp (${formattedPhone}) no se encuentra registrado en ninguna cuenta activa de MedFamilia.\n\nPara agendar citas o analizar exámenes con IA por WhatsApp, agregue este celular en la sección de números autorizados en su cuenta web.`
@@ -296,4 +291,3 @@ router.post('/webhook', async (req: Request, res: Response) => {
 });
 
 export default router;
-
