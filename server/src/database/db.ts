@@ -128,6 +128,13 @@ export function initDatabase() {
       name TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS otp_verifications (
+      phone TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Safe migrations for existing SQLite installations

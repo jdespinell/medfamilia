@@ -27,6 +27,7 @@ import { Family, Patient, Appointment, Specialty } from '../types';
 import { AppointmentModal } from '../components/AppointmentModal';
 import { PatientsModal } from '../components/PatientsModal';
 import { AppointmentDetailModal } from '../components/AppointmentDetailModal';
+import { WhatsAppNumbersModal } from '../components/WhatsAppNumbersModal';
 
 interface DashboardProps {
   family: Family;
@@ -55,6 +56,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   const [appointmentToEdit, setAppointmentToEdit] = useState<Appointment | null>(null);
   const [selectedAppointmentForDetail, setSelectedAppointmentForDetail] = useState<Appointment | null>(null);
   const [showPatientsModal, setShowPatientsModal] = useState(false);
+  const [showWhatsAppNumbersModal, setShowWhatsAppNumbersModal] = useState(false);
 
   // Push notification state
   const [pushSubscribed, setPushSubscribed] = useState(false);
@@ -347,6 +349,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
             </button>
 
             <button
+              onClick={() => setShowWhatsAppNumbersModal(true)}
+              title="Administrar Números de WhatsApp Autorizados"
+              className="p-2.5 rounded-2xl bg-teal-50 border border-teal-200 text-teal-800 hover:bg-teal-100 font-bold text-xs flex items-center gap-1.5 transition"
+            >
+              <MessageSquare className="w-4 h-4 text-teal-600" />
+              <span className="hidden sm:inline">Mis Números Bot</span>
+            </button>
+
+            <button
               onClick={onLogout}
               title="Cerrar Sesión"
               className="p-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-600 hover:bg-red-50 hover:text-red-600 transition"
@@ -604,6 +615,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
           patients={patients}
           onClose={() => setShowPatientsModal(false)}
           onRefresh={fetchData}
+        />
+      )}
+
+      {showWhatsAppNumbersModal && (
+        <WhatsAppNumbersModal
+          onClose={() => setShowWhatsAppNumbersModal(false)}
         />
       )}
     </div>
