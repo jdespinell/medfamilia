@@ -90,8 +90,17 @@ const handleSecureFileServe = (req: AuthRequest, res: express.Response) => {
     }
 
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Security-Policy', "default-src 'none'");
     res.setHeader('Cache-Control', 'private, max-age=3600');
+
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext === '.pdf') {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    } else if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
+      res.setHeader('Content-Type', ext === '.png' ? 'image/png' : 'image/jpeg');
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    }
+
     return res.sendFile(filePath);
   } catch (err) {
     console.error('Error sirviendo archivo protegido:', err);

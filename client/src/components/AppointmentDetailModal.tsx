@@ -19,7 +19,7 @@ import {
   Camera,
   Image as ImageIcon
 } from 'lucide-react';
-import { apiRequest } from '../api';
+import { apiRequest, getFileUrl } from '../api';
 import { Appointment, ExamResult } from '../types';
 
 interface AppointmentDetailModalProps {
@@ -365,7 +365,7 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
                   <div className="flex items-center justify-between">
                     <h4 className="text-base font-bold text-slate-900">{r.title}</h4>
                     <a
-                      href={r.file_url}
+                      href={getFileUrl(r.file_url)}
                       target="_blank"
                       rel="noreferrer"
                       className="px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs flex items-center gap-1"

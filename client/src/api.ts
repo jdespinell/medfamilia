@@ -12,6 +12,14 @@ export function removeToken() {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+export function getFileUrl(url: string): string {
+  if (!url) return '';
+  const token = getToken();
+  if (!token) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export async function apiRequest(endpoint: string, options: RequestInit = {}) {
   const token = getToken();
   const headers: Record<string, string> = {

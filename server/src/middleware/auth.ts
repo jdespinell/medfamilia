@@ -28,12 +28,17 @@ export function generateToken(payload: { id: string; code: string; name: string;
 }
 
 export function authMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
+  let token = '';
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Acceso no autorizado. Inicie sesión.' });
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (typeof req.query.token === 'string' && req.query.token.trim()) {
+    token = req.query.token.trim();
   }
 
-  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'Acceso no autorizado. Inicie sesión.' });
+  }
   try {
     const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ['HS256'] }) as any;
     if (!decoded || !decoded.id || typeof decoded.id !== 'string') {
