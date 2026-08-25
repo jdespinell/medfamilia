@@ -3,16 +3,29 @@ import { apiRequest, getToken, removeToken } from './api';
 import { Family } from './types';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
+import { AdminPage } from './pages/AdminPage';
 
 export const App: React.FC = () => {
+  const [isAdminRoute, setIsAdminRoute] = useState(window.location.pathname.startsWith('/admin'));
   const [family, setFamily] = useState<Family | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const handlePopState = () => {
+      setIsAdminRoute(window.location.pathname.startsWith('/admin'));
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    if (window.location.pathname.startsWith('/admin')) {
+      setLoading(false);
+      return () => window.removeEventListener('popstate', handlePopState);
+    }
+
     const token = getToken();
     if (!token) {
       setLoading(false);
-      return;
+      return () => window.removeEventListener('popstate', handlePopState);
     }
 
     apiRequest('/auth/me')
@@ -25,12 +38,14 @@ export const App: React.FC = () => {
       .finally(() => {
         setLoading(false);
       });
+
+    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  const handleLogout = () => {
-    removeToken();
-    setFamily(null);
-  };
+  // Route: /admin -> Render standalone Superadmin Page
+  if (isAdminRoute) {
+    return <AdminPage />;
+  }
 
   if (loading) {
     return (
@@ -48,6 +63,11 @@ export const App: React.FC = () => {
   }
 
   return <Dashboard family={family} onLogout={handleLogout} />;
+
+  function handleLogout() {
+    removeToken();
+    setFamily(null);
+  }
 };
 
 export default App;

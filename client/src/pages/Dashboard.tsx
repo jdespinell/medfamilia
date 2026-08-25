@@ -20,8 +20,7 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
-  MessageSquare,
-  ShieldCheck
+  MessageSquare
 } from 'lucide-react';
 import { apiRequest, removeToken } from '../api';
 import { Family, Patient, Appointment, Specialty } from '../types';
@@ -29,7 +28,6 @@ import { AppointmentModal } from '../components/AppointmentModal';
 import { PatientsModal } from '../components/PatientsModal';
 import { AppointmentDetailModal } from '../components/AppointmentDetailModal';
 import { WhatsAppNumbersModal } from '../components/WhatsAppNumbersModal';
-import { AdminModal } from '../components/AdminModal';
 
 interface DashboardProps {
   family: Family;
@@ -59,7 +57,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   const [selectedAppointmentForDetail, setSelectedAppointmentForDetail] = useState<Appointment | null>(null);
   const [showPatientsModal, setShowPatientsModal] = useState(false);
   const [showWhatsAppNumbersModal, setShowWhatsAppNumbersModal] = useState(false);
-  const [showAdminModal, setShowAdminModal] = useState(false);
 
   // Push notification state
   const [pushSubscribed, setPushSubscribed] = useState(false);
@@ -360,17 +357,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
               <span className="hidden sm:inline">Mis Números Bot</span>
             </button>
 
-            {family.is_admin && (
-              <button
-                onClick={() => setShowAdminModal(true)}
-                title="Panel de Administración SaaS"
-                className="p-2.5 rounded-2xl bg-slate-900 border border-slate-800 text-white hover:bg-slate-800 font-bold text-xs flex items-center gap-1.5 transition shadow-xs"
-              >
-                <ShieldCheck className="w-4 h-4 text-blue-400" />
-                <span className="hidden sm:inline">Admin Panel</span>
-              </button>
-            )}
-
             <button
               onClick={onLogout}
               title="Cerrar Sesión"
@@ -637,11 +623,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
           onClose={() => setShowWhatsAppNumbersModal(false)}
         />
       )}
-
-      <AdminModal
-        isOpen={showAdminModal}
-        onClose={() => setShowAdminModal(false)}
-      />
     </div>
   );
 };

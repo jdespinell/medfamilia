@@ -1,17 +1,57 @@
-import { Router, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import db from '../database/db.js';
-import { adminMiddleware, AuthRequest } from '../middleware/auth.js';
+import { adminMiddleware, generateAdminToken } from '../middleware/auth.js';
 
 const router = Router();
 
-// Protect all admin endpoints
+/**
+ * POST /api/admin/login
+ * Standalone Superadmin Login endpoint
+ */
+router.post('/login', (req: Request, res: Response) => {
+  try {
+    const { username, password } = req.body;
+
+    const expectedUsername = process.env.ADMIN_USERNAME || 'admin';
+    const expectedPassword = process.env.ADMIN_PASSWORD || 'admin12345';
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Usuario y contraseña de administrador requeridos.' });
+    }
+
+    if (username.trim() !== expectedUsername || password !== expectedPassword) {
+      return res.status(401).json({ error: 'Usuario o contraseña de administrador incorrectos.' });
+    }
+
+    const token = generateAdminToken(username.trim());
+
+    return res.json({
+      message: 'Inicio de sesión de Administrador exitoso.',
+      token,
+      username: expectedUsername,
+    });
+  } catch (error) {
+    console.error('Error en login de admin:', error);
+    return res.status(500).json({ error: 'Error interno en inicio de sesión de administrador.' });
+  }
+});
+
+// Protect all remaining admin endpoints
 router.use(adminMiddleware);
+
+/**
+ * GET /api/admin/me
+ * Verify active admin session
+ */
+router.get('/me', (req: Request, res: Response) => {
+  return res.json({ status: 'ok', role: 'superadmin' });
+});
 
 /**
  * GET /api/admin/families
  * List all families with usage metrics, plan details, and system stats
  */
-router.get('/families', (req: AuthRequest, res: Response) => {
+router.get('/families', (req: Request, res: Response) => {
   try {
     const today = new Date().toISOString().split('T')[0];
 
@@ -25,7 +65,6 @@ router.get('/families', (req: AuthRequest, res: Response) => {
         f.subscription_expires_at,
         COALESCE(f.plan_type, 'gratuito') as plan_type,
         COALESCE(f.max_daily_whatsapp_queries, 5) as max_daily_whatsapp_queries,
-        COALESCE(f.is_admin, 0) as is_admin,
         f.created_at,
         COALESCE(u.request_count, 0) as queries_used_today
       FROM families f
@@ -43,10 +82,7 @@ router.get('/families', (req: AuthRequest, res: Response) => {
 
     return res.json({
       stats,
-      families: families.map((f) => ({
-        ...f,
-        is_admin: f.is_admin === 1,
-      })),
+      families,
     });
   } catch (error) {
     console.error('Error al listar familias en admin:', error);
@@ -58,10 +94,10 @@ router.get('/families', (req: AuthRequest, res: Response) => {
  * PATCH /api/admin/families/:id/plan
  * Update a family's plan, max whatsapp daily limit, and subscription status
  */
-router.patch('/families/:id/plan', (req: AuthRequest, res: Response) => {
+router.patch('/families/:id/plan', (req: Request, res: Response) => {
   try {
     const familyId = req.params.id;
-    const { plan_type, max_daily_whatsapp_queries, subscription_status, is_admin } = req.body;
+    const { plan_type, max_daily_whatsapp_queries, subscription_status } = req.body;
 
     const existing = db.prepare('SELECT id, plan_type, max_daily_whatsapp_queries FROM families WHERE id = ?').get(familyId) as any;
     if (!existing) {
@@ -93,11 +129,6 @@ router.patch('/families/:id/plan', (req: AuthRequest, res: Response) => {
       params.push(subscription_status);
     }
 
-    if (typeof is_admin === 'boolean') {
-      updates.push('is_admin = ?');
-      params.push(is_admin ? 1 : 0);
-    }
-
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No se enviaron datos para actualizar.' });
     }
@@ -106,14 +137,11 @@ router.patch('/families/:id/plan', (req: AuthRequest, res: Response) => {
     const sql = `UPDATE families SET ${updates.join(', ')} WHERE id = ?`;
     db.prepare(sql).run(...params);
 
-    const updatedFamily = db.prepare('SELECT id, code, name, phone_number, subscription_status, plan_type, max_daily_whatsapp_queries, is_admin FROM families WHERE id = ?').get(familyId) as any;
+    const updatedFamily = db.prepare('SELECT id, code, name, phone_number, subscription_status, plan_type, max_daily_whatsapp_queries FROM families WHERE id = ?').get(familyId) as any;
 
     return res.json({
       message: 'Plan de la familia actualizado con éxito.',
-      family: {
-        ...updatedFamily,
-        is_admin: updatedFamily.is_admin === 1,
-      },
+      family: updatedFamily,
     });
   } catch (error) {
     console.error('Error al actualizar plan en admin:', error);
@@ -125,7 +153,7 @@ router.patch('/families/:id/plan', (req: AuthRequest, res: Response) => {
  * POST /api/admin/families/:id/reset-usage
  * Reset today's WhatsApp AI usage count for a family
  */
-router.post('/families/:id/reset-usage', (req: AuthRequest, res: Response) => {
+router.post('/families/:id/reset-usage', (req: Request, res: Response) => {
   try {
     const familyId = req.params.id;
     const today = new Date().toISOString().split('T')[0];

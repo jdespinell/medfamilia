@@ -30,6 +30,10 @@ export function generateToken(payload: { id: string; code: string; name: string;
   return jwt.sign(payload, getJwtSecret(), { algorithm: 'HS256', expiresIn: '90d' });
 }
 
+export function generateAdminToken(username: string) {
+  return jwt.sign({ role: 'superadmin', username }, getJwtSecret(), { algorithm: 'HS256', expiresIn: '7d' });
+}
+
 export function authMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
   let token = '';
   const authHeader = req.headers.authorization;
@@ -49,7 +53,7 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
     }
 
     // Verify family active status / existence in DB
-    const family = db.prepare('SELECT id, code, name, phone_number, subscription_status, subscription_expires_at, plan_type, max_daily_whatsapp_queries, is_admin FROM families WHERE id = ?').get(decoded.id) as any;
+    const family = db.prepare('SELECT id, code, name, phone_number, subscription_status, subscription_expires_at, plan_type, max_daily_whatsapp_queries FROM families WHERE id = ?').get(decoded.id) as any;
     if (!family) {
       return res.status(401).json({ error: 'La cuenta familiar ya no existe o fue deshabilitada.' });
     }
@@ -63,7 +67,6 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
       subscription_expires_at: family.subscription_expires_at,
       plan_type: family.plan_type || 'gratuito',
       max_daily_whatsapp_queries: family.max_daily_whatsapp_queries ?? 5,
-      is_admin: family.is_admin === 1,
     };
     next();
   } catch (err) {
@@ -71,12 +74,27 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   }
 }
 
-export function adminMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
-  authMiddleware(req, res, () => {
-    if (!req.family?.is_admin) {
+export function adminMiddleware(req: Request, res: Response, next: NextFunction) {
+  let token = '';
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (typeof req.query.token === 'string' && req.query.token.trim()) {
+    token = req.query.token.trim();
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: 'Acceso no autorizado. Se requieren credenciales de administrador.' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ['HS256'] }) as any;
+    if (!decoded || decoded.role !== 'superadmin') {
       return res.status(403).json({ error: 'Acceso denegado. Se requieren permisos de administrador.' });
     }
     next();
-  });
+  } catch (err) {
+    return res.status(401).json({ error: 'Sesión de administrador expirada o inválida.' });
+  }
 }
 

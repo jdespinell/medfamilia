@@ -148,15 +148,6 @@ export function initDatabase() {
   try { db.exec('ALTER TABLE families ADD COLUMN payment_receipt_url TEXT;'); } catch (e) {}
   try { db.exec('ALTER TABLE families ADD COLUMN plan_type TEXT DEFAULT "gratuito";'); } catch (e) {}
   try { db.exec('ALTER TABLE families ADD COLUMN max_daily_whatsapp_queries INTEGER DEFAULT 5;'); } catch (e) {}
-  try { db.exec('ALTER TABLE families ADD COLUMN is_admin INTEGER DEFAULT 0;'); } catch (e) {}
-
-  // Auto-promote first registered family or code 'admin' to admin if no admin exists
-  try {
-    const adminCount = (db.prepare('SELECT COUNT(*) as cnt FROM families WHERE is_admin = 1').get() as any)?.cnt;
-    if (adminCount === 0) {
-      db.prepare('UPDATE families SET is_admin = 1 WHERE id = (SELECT id FROM families ORDER BY created_at ASC LIMIT 1)').run();
-    }
-  } catch (e) {}
 
   // Populate default system specialties if empty
   const count = (db.prepare('SELECT COUNT(*) as cnt FROM specialties WHERE family_id IS NULL').get() as any)?.cnt;
