@@ -388,54 +388,62 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
       console.log(`💬 Mensaje de ${formattedPhone}: "${userText}"`);
 
-      // Lookup family by multi-number table or main family phone
+      // 1. PASO 1 (0 TOKENS): Buscar si el número emisor está registrado en alguna familia activa
       let familyMatch = db.prepare('SELECT family_id FROM family_whatsapp_numbers WHERE phone_number = ?').get(formattedPhone) as any;
       if (!familyMatch) {
-        familyMatch = db.prepare('SELECT id as family_id FROM families WHERE phone_number = ?').get(formattedPhone) as any;
+        familyMatch = db.prepare('SELECT id as family_id, name FROM families WHERE phone_number = ?').get(formattedPhone) as any;
+      } else {
+        const familyObj = db.prepare('SELECT name FROM families WHERE id = ?').get(familyMatch.family_id) as any;
+        if (familyObj) familyMatch.name = familyObj.name;
       }
 
+      // 2. PASO 2 (0 TOKENS): Si NO es usuario registrado -> Mensaje automático comercial / invitación a registrarse
       if (!familyMatch) {
         if (userText) {
-          console.log(`⚠️ Número ${formattedPhone} no registrado en MedFamilia.`);
+          console.log(`⚡ [0 Tokens IA] Número ${formattedPhone} no registrado. Enviando mensaje automático de ventas.`);
           await sendWhatsAppMessage(
             formattedPhone,
-            `👋 *¡Hola! MedFamilia le da la bienvenida.*\n\nEste número de WhatsApp (${formattedPhone}) no se encuentra registrado en ninguna cuenta activa de MedFamilia.\n\nPara agendar citas o analizar exámenes con IA por WhatsApp, agregue este celular en la sección de números autorizados en su cuenta web.`
+            `👋 *¡Hola! Bienvenido a MedFamilia SaaS* 🩺\n\nOrganiza la salud y citas de toda tu familia con *Inteligencia Artificial*:\n\n✨ *Agendamiento automático:* Envía una foto o PDF de tus órdenes médicas.\n✨ *Análisis de laboratorio:* Envía fotos de exámenes para resúmenes amigables.\n✨ *Calendarios:* Sincronización automática con Google Calendar.\n\n📲 *¡Comienza tu prueba gratuita hoy!*\nRegístrate o conecta tu número aquí:\n👉 https://medfamilia.app\n\n_(Si ya tienes cuenta, agrega este celular en la sección de Ajustes ➔ Números Autorizados)._`
           );
         }
         return res.sendStatus(200);
       }
 
       const familyId = familyMatch.family_id;
+      const familyName = familyMatch.name || 'Familia';
 
-      // 1. Check text commands
+      // 3. PASO 3 (0 TOKENS): Si SÍ es usuario registrado y escribe comandos simples o menú ("hola", "menu", "1", "2", "3")
       if (userText) {
         const textLower = userText.toLowerCase().trim();
 
-        if (textLower === 'hola' || textLower === 'ayuda' || textLower === 'menu') {
+        if (textLower === 'hola' || textLower === 'ayuda' || textLower === 'menu' || textLower === '1' || textLower === '2' || textLower === '3' || textLower === '4') {
+          console.log(`⚡ [0 Tokens IA] Usuario registrado ${formattedPhone} solicitó menú estático.`);
           await sendWhatsAppMessage(
             formattedPhone,
-            `🩺 *¡Hola! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar de IA.\n\n*¿Qué puedes hacer por aquí?*\n1️⃣ Envíame una **foto o archivo PDF** de una orden médica y la agendaré automáticamente.\n2️⃣ Envíame una foto de un **resultado de examen de laboratorio** y te enviaré un resumen amigable.\n3️⃣ Escríbeme detalles de una cita (ej: *"Cita con el Cardiólogo mañana a las 8am"*).`
+            `🩺 *¡Hola ${familyName}! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar con Inteligencia Artificial.\n\n📌 *¿Cómo puedo ayudarte hoy?*\n\n1️⃣ *Agendar Cita con Foto o PDF:* Envíame la foto de tu orden médica o examen.\n2️⃣ *Analizar Examen:* Envíame una foto de tus resultados de laboratorio para darte un resumen.\n3️⃣ *Agendar por Texto:* Escríbeme datos de tu cita (ej: *"Cita con el Cardiólogo mañana a las 8am en la Clínica del Country"*).\n4️⃣ *Ver Mis Citas:* Ingresa a la Web App: https://medfamilia.app`
           );
-        } else {
-          // Check rate limit for AI processing
-          const allowed = checkAndIncrementAiUsage(familyId);
-          if (!allowed) {
-            await sendWhatsAppMessage(
-              formattedPhone,
-              `⚠️ *Límite diario de IA alcanzado*\n\nHas alcanzado el límite máximo diario de ${MAX_DAILY_AI_REQUESTS} consultas por IA en WhatsApp para tu cuenta familiar hoy.`
-            );
-            return res.sendStatus(200);
-          }
+          return res.sendStatus(200);
+        }
 
-          try {
-            const extracted = await extractAppointmentFromText(userText);
-            await sendWhatsAppMessage(
-              formattedPhone,
-              `✅ *Cita Identificada con Éxito*\n\n📌 *Título:* ${extracted.title}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha:* ${extracted.date_time || 'Por confirmar'}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n\n*MedFamilia*`
-            );
-          } catch (aiErr) {
-            await sendWhatsAppMessage(formattedPhone, 'Recibí tu mensaje. Si deseas agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.');
-          }
+        // 4. PASO 4 (GEMINI IA TOKENS): Solo si el usuario envía texto descriptivo complejo de cita médica
+        const allowed = checkAndIncrementAiUsage(familyId);
+        if (!allowed) {
+          await sendWhatsAppMessage(
+            formattedPhone,
+            `⚠️ *Límite diario de IA alcanzado*\n\nHas alcanzado el límite máximo diario de ${MAX_DAILY_AI_REQUESTS} consultas por IA en WhatsApp para tu cuenta familiar hoy.\n\nPara agendar más citas ingresa directamente en nuestra App Web: https://medfamilia.app`
+          );
+          return res.sendStatus(200);
+        }
+
+        try {
+          console.log(`🤖 [Gemini IA Tokens] Procesando texto de cita para ${formattedPhone}`);
+          const extracted = await extractAppointmentFromText(userText);
+          await sendWhatsAppMessage(
+            formattedPhone,
+            `✅ *Cita Identificada con Éxito*\n\n📌 *Título:* ${extracted.title}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha:* ${extracted.date_time || 'Por confirmar'}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n\n*MedFamilia*`
+          );
+        } catch (aiErr) {
+          await sendWhatsAppMessage(formattedPhone, 'Recibí tu mensaje. Si deseas agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.');
         }
       }
     }
