@@ -340,6 +340,18 @@ router.get('/pairing-code', async (req: Request, res: Response) => {
   }
 });
 
+const processedMessageIds = new Set<string>();
+
+function isDuplicateMessage(msgId?: string): boolean {
+  if (!msgId) return false;
+  if (processedMessageIds.has(msgId)) {
+    return true;
+  }
+  processedMessageIds.add(msgId);
+  setTimeout(() => processedMessageIds.delete(msgId), 5 * 60 * 1000);
+  return false;
+}
+
 /**
  * Webhook Endpoint para recibir eventos y mensajes entrantes de Evolution API
  */
@@ -354,8 +366,14 @@ router.post('/webhook', async (req: Request, res: Response) => {
       const messageObj = eventData.data;
       const remoteJid = messageObj?.key?.remoteJid;
       const fromMe = messageObj?.key?.fromMe;
+      const messageId = messageObj?.key?.id;
 
       if (fromMe || !remoteJid) {
+        return res.sendStatus(200);
+      }
+
+      if (isDuplicateMessage(messageId)) {
+        console.log(`⏩ [Deduplicador] Mensaje duplicado omitido [${messageId}]`);
         return res.sendStatus(200);
       }
 
