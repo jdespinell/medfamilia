@@ -620,25 +620,25 @@ router.post('/webhook', async (req: Request, res: Response) => {
             `).get(aiResult.requestedExamId, familyId) as any;
 
             if (exam && exam.file_url) {
-              let localPath = exam.file_url;
-              if (localPath.startsWith('/uploads/') || localPath.startsWith('uploads/')) {
-                localPath = path.join(process.cwd(), localPath.replace(/^\//, ''));
-              }
+              const filename = path.basename(exam.file_url.split('?')[0]);
+              const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+              const localPath = path.join(uploadsDir, filename);
 
               if (fs.existsSync(localPath)) {
                 const fileBuffer = fs.readFileSync(localPath);
-                const isPdf = exam.file_type?.includes('pdf') || exam.file_url.endsWith('.pdf');
+                const isPdf = exam.file_type?.includes('pdf') || filename.toLowerCase().endsWith('.pdf');
                 const mimeType = isPdf ? 'application/pdf' : 'image/jpeg';
                 const base64Media = `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
-                const fileName = path.basename(localPath);
                 const mediaType = isPdf ? 'document' : 'image';
                 const caption = `📄 *Resultado de Examen: ${exam.title}*\n👤 *Paciente:* ${exam.patient_name}\n📅 *Fecha:* ${new Date(exam.created_at).toLocaleDateString('es-ES')}\n\n*MedFamilia*`;
 
-                const sent = await sendWhatsAppMedia(formattedPhone, base64Media, mediaType, fileName, caption);
+                const sent = await sendWhatsAppMedia(formattedPhone, base64Media, mediaType, filename, caption);
                 if (sent) {
-                  console.log(`[${getLocalTimestamp()}] ✅ [Archivo Enviado] Archivo del examen "${exam.title}" enviado exitosamente a +${formattedPhone}`);
+                  console.log(`[${getLocalTimestamp()}] ✅ [Archivo Enviado] Archivo del examen "${exam.title}" (${filename}) enviado exitosamente a +${formattedPhone}`);
                 }
                 return res.sendStatus(200);
+              } else {
+                console.warn(`[${getLocalTimestamp()}] ⚠️ [Archivo No Encontrado en Disco] Buscado en: ${localPath}`);
               }
             }
 

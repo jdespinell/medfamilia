@@ -227,7 +227,7 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
                 </div>
               </div>
               <a
-                href={appointment.photo_url}
+                href={getFileUrl(appointment.photo_url)}
                 target="_blank"
                 rel="noreferrer"
                 className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 transition shadow-sm"
