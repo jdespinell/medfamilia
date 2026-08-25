@@ -5,8 +5,15 @@ import db from '../database/db.js';
 
 const router = Router();
 
+function getLocalTimestamp(): string {
+  const now = new Date();
+  return now.toLocaleTimeString('es-CO', { hour12: false, timeZone: 'America/Bogota' });
+}
+
 router.use((req, res, next) => {
-  console.log(`🌐 [WhatsApp Route Hit] ${req.method} ${req.originalUrl || req.url}`);
+  if (req.url !== '/webhook') {
+    console.log(`[${getLocalTimestamp()}] 🌐 [WhatsApp Route Hit] ${req.method} ${req.originalUrl || req.url}`);
+  }
   next();
 });
 
@@ -365,13 +372,13 @@ router.post('/webhook', async (req: Request, res: Response) => {
       const remoteJid = messageObj?.key?.remoteJid;
       const fromMe = messageObj?.key?.fromMe;
       const messageId = messageObj?.key?.id;
+      const pushName = messageObj?.pushName || 'Usuario';
 
       if (fromMe || !remoteJid) {
         return res.sendStatus(200);
       }
 
       if (isDuplicateMessage(messageId)) {
-        console.log(`⏩ [Deduplicador] Mensaje duplicado omitido [${messageId}]`);
         return res.sendStatus(200);
       }
 
@@ -382,9 +389,10 @@ router.post('/webhook', async (req: Request, res: Response) => {
       const userText = messageObj?.message?.conversation || 
                        messageObj?.message?.extendedTextMessage?.text ||
                        messageObj?.message?.imageMessage?.caption ||
-                       messageObj?.message?.documentMessage?.caption;
+                       messageObj?.message?.documentMessage?.caption ||
+                       '[Archivo Adjunto / Imagen / PDF]';
 
-      console.log(`💬 Mensaje de ${formattedPhone}: "${userText}"`);
+      console.log(`\n[${getLocalTimestamp()}] 💬 [WhatsApp Entrante] De: +${formattedPhone} (${pushName}) | Mensaje: "${userText}"`);
 
       // 1. PASO 1 (0 TOKENS): Buscar si el número emisor está registrado en alguna familia activa
       let familyMatch = db.prepare('SELECT family_id FROM family_whatsapp_numbers WHERE phone_number = ?').get(formattedPhone) as any;
@@ -398,34 +406,42 @@ router.post('/webhook', async (req: Request, res: Response) => {
       // 2. PASO 2 (0 TOKENS): Si NO es usuario registrado -> Mensaje automático comercial / invitación a registrarse
       if (!familyMatch) {
         if (userText) {
-          console.log(`⚡ [0 Tokens IA] Número ${formattedPhone} no registrado. Enviando mensaje automático de ventas.`);
-          await sendWhatsAppMessage(
+          console.log(`[${getLocalTimestamp()}] ⚡ [Flujo: No Registrado] 0 Tokens IA usados. Enviando mensaje comercial de ventas a +${formattedPhone}`);
+          const sent = await sendWhatsAppMessage(
             formattedPhone,
             `👋 *¡Hola! Bienvenido a MedFamilia SaaS* 🩺\n\nOrganiza la salud y citas de toda tu familia con *Inteligencia Artificial*:\n\n✨ *Agendamiento automático:* Envía una foto o PDF de tus órdenes médicas.\n✨ *Análisis de laboratorio:* Envía fotos de exámenes para resúmenes amigables.\n✨ *Calendarios:* Sincronización automática con Google Calendar.\n\n📲 *¡Comienza tu prueba gratuita hoy!*\nRegístrate o conecta tu número aquí:\n👉 https://medfamilia.app\n\n_(Si ya tienes cuenta, agrega este celular en la sección de Ajustes ➔ Números Autorizados)._`
           );
+          if (sent) {
+            console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Mensaje comercial entregado exitosamente por WhatsApp a +${formattedPhone}`);
+          }
         }
         return res.sendStatus(200);
       }
 
       const familyId = familyMatch.family_id;
       const familyName = familyMatch.name || 'Familia';
+      console.log(`[${getLocalTimestamp()}] 🔑 [Familia Identificada] Pertenece a: "${familyName}" (ID: ${familyId})`);
 
       // 3. PASO 3 (0 TOKENS): Si SÍ es usuario registrado y escribe comandos simples o menú ("hola", "menu", "1", "2", "3")
       if (userText) {
         const textLower = userText.toLowerCase().trim();
 
         if (textLower === 'hola' || textLower === 'ayuda' || textLower === 'menu' || textLower === '1' || textLower === '2' || textLower === '3' || textLower === '4') {
-          console.log(`⚡ [0 Tokens IA] Usuario registrado ${formattedPhone} solicitó menú estático.`);
-          await sendWhatsAppMessage(
+          console.log(`[${getLocalTimestamp()}] ⚡ [Flujo: Menú Interactivo] 0 Tokens IA usados. Enviando menú estático a +${formattedPhone}`);
+          const sent = await sendWhatsAppMessage(
             formattedPhone,
             `🩺 *¡Hola ${familyName}! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar con Inteligencia Artificial.\n\n📌 *¿Cómo puedo ayudarte hoy?*\n\n1️⃣ *Agendar Cita con Foto o PDF:* Envíame la foto de tu orden médica o examen.\n2️⃣ *Analizar Examen:* Envíame una foto de tus resultados de laboratorio para darte un resumen.\n3️⃣ *Agendar por Texto:* Escríbeme datos de tu cita (ej: *"Cita con el Cardiólogo mañana a las 8am en la Clínica del Country"*).\n4️⃣ *Ver Mis Citas:* Ingresa a la Web App: https://medfamilia.app`
           );
+          if (sent) {
+            console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Menú de opciones entregado exitosamente por WhatsApp a +${formattedPhone}`);
+          }
           return res.sendStatus(200);
         }
 
         // 4. PASO 4 (GEMINI IA TOKENS): Solo si el usuario envía texto descriptivo complejo de cita médica
         const allowed = checkAndIncrementAiUsage(familyId);
         if (!allowed) {
+          console.log(`[${getLocalTimestamp()}] ⚠️ [Límite Diario] Familia ${familyName} alcanzó la cuota de 15 peticiones de IA por hoy.`);
           await sendWhatsAppMessage(
             formattedPhone,
             `⚠️ *Límite diario de IA alcanzado*\n\nHas alcanzado el límite máximo diario de ${MAX_DAILY_AI_REQUESTS} consultas por IA en WhatsApp para tu cuenta familiar hoy.\n\nPara agendar más citas ingresa directamente en nuestra App Web: https://medfamilia.app`
@@ -434,13 +450,19 @@ router.post('/webhook', async (req: Request, res: Response) => {
         }
 
         try {
-          console.log(`🤖 [Gemini IA Tokens] Procesando texto de cita para ${formattedPhone}`);
+          console.log(`[${getLocalTimestamp()}] 🤖 [Flujo: Gemini IA] Analizando cita médica con Inteligencia Artificial para +${formattedPhone}...`);
           const extracted = await extractAppointmentFromText(userText);
-          await sendWhatsAppMessage(
+          console.log(`[${getLocalTimestamp()}] ✨ [IA Éxito] Título: "${extracted.title}" | Fecha: "${extracted.date_time}" | Especialidad: "${extracted.specialty}"`);
+
+          const sent = await sendWhatsAppMessage(
             formattedPhone,
             `✅ *Cita Identificada con Éxito*\n\n📌 *Título:* ${extracted.title}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha:* ${extracted.date_time || 'Por confirmar'}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n\n*MedFamilia*`
           );
-        } catch (aiErr) {
+          if (sent) {
+            console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Confirmación de cita por IA enviada por WhatsApp a +${formattedPhone}`);
+          }
+        } catch (aiErr: any) {
+          console.error(`[${getLocalTimestamp()}] ❌ [Error IA] Fallo procesando texto con Gemini:`, aiErr?.message || aiErr);
           await sendWhatsAppMessage(formattedPhone, 'Recibí tu mensaje. Si deseas agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.');
         }
       }
@@ -448,7 +470,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
     return res.sendStatus(200);
   } catch (error) {
-    console.error('Error procesando Webhook de WhatsApp:', error);
+    console.error(`[${getLocalTimestamp()}] ❌ Error procesando Webhook de WhatsApp:`, error);
     return res.sendStatus(500);
   }
 });
