@@ -38,6 +38,9 @@ services:
       - DATABASE_CONNECTION_URI=postgresql://${POSTGRES_USER:-medfamilia_user}:${POSTGRES_PASSWORD:-medfamilia_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-medfamilia}?schema=evolution_api
       - DATABASE_CONNECTION_CLIENT_NAME=evolution_exchange
       - DATABASE_SAVE_DATA_INSTANCE=true
+      - WEBHOOK_GLOBAL_URL=http://medfamilia:3000/api/whatsapp/webhook
+      - WEBHOOK_GLOBAL_ENABLED=true
+      - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
       - LOG_LEVEL=ERROR
     volumes:
       - evolution_instances:/evolution/instances
