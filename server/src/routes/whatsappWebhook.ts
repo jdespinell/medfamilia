@@ -359,8 +359,10 @@ router.post('/webhook', async (req: Request, res: Response) => {
         return res.sendStatus(200);
       }
 
-      const senderPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-      const formattedPhone = senderPhone.startsWith('57') ? senderPhone : `57${senderPhone}`;
+      const rawSender = (eventData?.sender || remoteJid || '').toString();
+      const cleanDigits = rawSender.replace(/@.*$/, '').replace(/\D/g, '');
+      const formattedPhone = cleanDigits.length === 10 ? `57${cleanDigits}` : cleanDigits;
+
       const userText = messageObj?.message?.conversation || 
                        messageObj?.message?.extendedTextMessage?.text ||
                        messageObj?.message?.imageMessage?.caption ||
@@ -378,7 +380,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
         if (userText) {
           console.log(`⚠️ Número ${formattedPhone} no registrado en MedFamilia.`);
           await sendWhatsAppMessage(
-            senderPhone,
+            formattedPhone,
             `👋 *¡Hola! MedFamilia le da la bienvenida.*\n\nEste número de WhatsApp (${formattedPhone}) no se encuentra registrado en ninguna cuenta activa de MedFamilia.\n\nPara agendar citas o analizar exámenes con IA por WhatsApp, agregue este celular en la sección de números autorizados en su cuenta web.`
           );
         }
@@ -393,7 +395,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
         if (textLower === 'hola' || textLower === 'ayuda' || textLower === 'menu') {
           await sendWhatsAppMessage(
-            senderPhone,
+            formattedPhone,
             `🩺 *¡Hola! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar de IA.\n\n*¿Qué puedes hacer por aquí?*\n1️⃣ Envíame una **foto o archivo PDF** de una orden médica y la agendaré automáticamente.\n2️⃣ Envíame una foto de un **resultado de examen de laboratorio** y te enviaré un resumen amigable.\n3️⃣ Escríbeme detalles de una cita (ej: *"Cita con el Cardiólogo mañana a las 8am"*).`
           );
         } else {
@@ -401,7 +403,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
           const allowed = checkAndIncrementAiUsage(familyId);
           if (!allowed) {
             await sendWhatsAppMessage(
-              senderPhone,
+              formattedPhone,
               `⚠️ *Límite diario de IA alcanzado*\n\nHas alcanzado el límite máximo diario de ${MAX_DAILY_AI_REQUESTS} consultas por IA en WhatsApp para tu cuenta familiar hoy.`
             );
             return res.sendStatus(200);
@@ -410,11 +412,11 @@ router.post('/webhook', async (req: Request, res: Response) => {
           try {
             const extracted = await extractAppointmentFromText(userText);
             await sendWhatsAppMessage(
-              senderPhone,
+              formattedPhone,
               `✅ *Cita Identificada con Éxito*\n\n📌 *Título:* ${extracted.title}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha:* ${extracted.date_time || 'Por confirmar'}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n\n*MedFamilia*`
             );
           } catch (aiErr) {
-            await sendWhatsAppMessage(senderPhone, 'Recibí tu mensaje. Si deseas agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.');
+            await sendWhatsAppMessage(formattedPhone, 'Recibí tu mensaje. Si deseas agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.');
           }
         }
       }
