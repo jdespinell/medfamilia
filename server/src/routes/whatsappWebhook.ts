@@ -358,8 +358,6 @@ function isDuplicateMessage(msgId?: string): boolean {
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
     const eventData = req.body;
-    console.log('📩 [WhatsApp Webhook] Mensaje recibido:', JSON.stringify(eventData));
-
     const eventType = (eventData?.event || '').toString().toLowerCase();
 
     if (eventType === 'messages.upsert' || eventType === 'messages_upsert') {
