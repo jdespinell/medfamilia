@@ -16,6 +16,7 @@ import whatsappNumbersRoutes from './routes/whatsappNumbers.js';
 import whatsappWebhookRoutes from './routes/whatsappWebhook.js';
 import { authMiddleware, AuthRequest } from './middleware/auth.js';
 import { authRateLimiter, generalRateLimiter } from './middleware/rateLimiter.js';
+import { ensureWhatsAppWebhook } from './services/whatsapp.js';
 
 dotenv.config();
 
@@ -140,5 +141,10 @@ app.listen(PORT, () => {
   console.log(`================================================`);
   console.log(`🩺 MedFamilia Backend SaaS ejecutándose en puerto ${PORT}`);
   console.log(`================================================`);
+
+  // Auto-configurar Webhook de WhatsApp con Evolution API al iniciar
+  setTimeout(() => {
+    ensureWhatsAppWebhook();
+  }, 3000);
 });
 
