@@ -216,7 +216,9 @@ router.post('/webhook', async (req: Request, res: Response) => {
     const eventData = req.body;
     console.log('📩 [WhatsApp Webhook] Mensaje recibido:', JSON.stringify(eventData));
 
-    if (eventData?.event === 'messages.upsert') {
+    const eventType = (eventData?.event || '').toString().toLowerCase();
+
+    if (eventType === 'messages.upsert' || eventType === 'messages_upsert') {
       const messageObj = eventData.data;
       const remoteJid = messageObj?.key?.remoteJid;
       const fromMe = messageObj?.key?.fromMe;
@@ -227,7 +229,10 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
       const senderPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/\D/g, '');
       const formattedPhone = senderPhone.startsWith('57') ? senderPhone : `57${senderPhone}`;
-      const userText = messageObj?.message?.conversation || messageObj?.message?.extendedTextMessage?.text;
+      const userText = messageObj?.message?.conversation || 
+                       messageObj?.message?.extendedTextMessage?.text ||
+                       messageObj?.message?.imageMessage?.caption ||
+                       messageObj?.message?.documentMessage?.caption;
 
       console.log(`💬 Mensaje de ${formattedPhone}: "${userText}"`);
 

@@ -59,7 +59,7 @@ export async function ensureWhatsAppWebhook(): Promise<boolean> {
           enabled: true,
           url: webhookUrl,
           byEvents: false,
-          events: ['MESSAGES_UPSERT']
+          events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'SEND_MESSAGE']
         }
       }),
     });
