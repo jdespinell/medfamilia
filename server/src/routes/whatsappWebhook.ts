@@ -5,6 +5,11 @@ import db from '../database/db.js';
 
 const router = Router();
 
+router.use((req, res, next) => {
+  console.log(`🌐 [WhatsApp Route Hit] ${req.method} ${req.originalUrl || req.url}`);
+  next();
+});
+
 const MAX_DAILY_AI_REQUESTS = 15; // Maximum AI processing requests per family per day via WhatsApp
 
 function checkAndIncrementAiUsage(familyId: string): boolean {
