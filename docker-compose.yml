@@ -87,6 +87,8 @@ services:
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
       - JWT_SECRET=${JWT_SECRET:-super-secret-key-medfamilia-2026}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin12345}
     volumes:
       - medfamilia_data:/app/data
       - medfamilia_uploads:/app/uploads

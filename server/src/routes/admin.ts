@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import db from '../database/db.js';
 import { adminMiddleware, generateAdminToken } from '../middleware/auth.js';
 
+import dotenv from 'dotenv';
+
 const router = Router();
 
 /**
@@ -12,18 +14,28 @@ router.post('/login', (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
 
-    const expectedUsername = process.env.ADMIN_USERNAME || 'admin';
-    const expectedPassword = process.env.ADMIN_PASSWORD || 'admin12345';
+    // Reload .env in case it was updated on the server
+    dotenv.config();
 
-    if (!username || !password) {
+    const rawUsername = process.env.ADMIN_USERNAME || 'admin';
+    const rawPassword = process.env.ADMIN_PASSWORD || 'admin12345';
+
+    // Sanitize quotes ("..." or '...') and whitespace from .env
+    const expectedUsername = rawUsername.trim().replace(/^["']|["']$/g, '');
+    const expectedPassword = rawPassword.trim().replace(/^["']|["']$/g, '');
+
+    const cleanUsername = String(username || '').trim();
+    const cleanPassword = String(password || '').trim();
+
+    if (!cleanUsername || !cleanPassword) {
       return res.status(400).json({ error: 'Usuario y contraseña de administrador requeridos.' });
     }
 
-    if (username.trim() !== expectedUsername || password !== expectedPassword) {
+    if (cleanUsername !== expectedUsername || cleanPassword !== expectedPassword) {
       return res.status(401).json({ error: 'Usuario o contraseña de administrador incorrectos.' });
     }
 
-    const token = generateAdminToken(username.trim());
+    const token = generateAdminToken(cleanUsername);
 
     return res.json({
       message: 'Inicio de sesión de Administrador exitoso.',
