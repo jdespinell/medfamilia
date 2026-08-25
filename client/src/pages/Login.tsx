@@ -7,11 +7,33 @@ interface LoginProps {
   onLoginSuccess: (family: Family) => void;
 }
 
+const COUNTRY_CODES = [
+  { code: '57', flag: '🇨🇴', name: 'Colombia (+57)' },
+  { code: '52', flag: '🇲🇽', name: 'México (+52)' },
+  { code: '1', flag: '🇺🇸', name: 'EE.UU. / Canadá (+1)' },
+  { code: '34', flag: '🇪🇸', name: 'España (+34)' },
+  { code: '54', flag: '🇦🇷', name: 'Argentina (+54)' },
+  { code: '56', flag: '🇨🇱', name: 'Chile (+56)' },
+  { code: '51', flag: '🇵🇪', name: 'Perú (+51)' },
+  { code: '593', flag: '🇪🇨', name: 'Ecuador (+593)' },
+  { code: '58', flag: '🇻🇪', name: 'Venezuela (+58)' },
+  { code: '55', flag: '🇧🇷', name: 'Brasil (+55)' },
+  { code: '502', flag: '🇬🇹', name: 'Guatemala (+502)' },
+  { code: '503', flag: '🇸🇻', name: 'El Salvador (+503)' },
+  { code: '504', flag: '🇭🇳', name: 'Honduras (+504)' },
+  { code: '506', flag: '🇨🇷', name: 'Costa Rica (+506)' },
+  { code: '507', flag: '🇵🇦', name: 'Panamá (+507)' },
+  { code: '591', flag: '🇧🇴', name: 'Bolivia (+591)' },
+  { code: '595', flag: '🇵🇾', name: 'Paraguay (+595)' },
+  { code: '598', flag: '🇺🇾', name: 'Uruguay (+598)' },
+];
+
 export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const [isRegister, setIsRegister] = useState(false);
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
+  const [countryCode, setCountryCode] = useState('57'); // Default Colombia (+57)
   const [phone, setPhone] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [step, setStep] = useState<'form' | 'otp'>('form');
@@ -20,21 +42,33 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const getFormattedFullPhone = () => {
+    const cleanDigits = phone.replace(/\D/g, '');
+    return cleanDigits.startsWith(countryCode) ? cleanDigits : `${countryCode}${cleanDigits}`;
+  };
+
   // Step 1: Send WhatsApp OTP Code
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setInfo('');
+
+    const fullPhone = getFormattedFullPhone();
+    if (fullPhone.length < 10) {
+      setError('Por favor ingrese un número celular válido.');
+      return;
+    }
+
     setLoading(true);
 
     try {
       const res = await apiRequest('/auth/send-whatsapp-otp', {
         method: 'POST',
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone: fullPhone }),
       });
 
       setStep('otp');
-      setInfo(`✅ Se ha enviado un código de verificación de 6 dígitos a tu WhatsApp (${res.phone || phone}).`);
+      setInfo(`✅ Se ha enviado un código de verificación de 6 dígitos a tu WhatsApp (+${res.phone || fullPhone}).`);
     } catch (err: any) {
       setError(err.message || 'Error enviando el código de verificación por WhatsApp.');
     } finally {
@@ -48,6 +82,8 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     setError('');
     setLoading(true);
 
+    const fullPhone = getFormattedFullPhone();
+
     try {
       const res = await apiRequest('/auth/register', {
         method: 'POST',
@@ -55,7 +91,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
           name,
           code,
           password,
-          phone,
+          phone: fullPhone,
           otp_code: otpCode,
         }),
       });
@@ -232,16 +268,32 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
               <label className="block text-sm font-bold text-slate-800 mb-1">
                 Número de WhatsApp (Para Código de Verificación)
               </label>
-              <div className="relative">
-                <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-600" />
-                <input
-                  type="tel"
-                  required
-                  placeholder="ej. 3001234567"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3 text-base rounded-2xl border-2 border-slate-200 focus:border-emerald-600 focus:outline-none bg-slate-50 focus:bg-white transition"
-                />
+
+              <div className="flex items-center gap-2">
+                {/* Country Code Selector */}
+                <select
+                  value={countryCode}
+                  onChange={(e) => setCountryCode(e.target.value)}
+                  className="py-3 px-2 text-sm font-bold rounded-2xl border-2 border-slate-200 focus:border-emerald-600 focus:outline-none bg-slate-50 focus:bg-white transition shrink-0 cursor-pointer"
+                >
+                  {COUNTRY_CODES.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.flag} +{c.code}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="relative flex-1">
+                  <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-600" />
+                  <input
+                    type="tel"
+                    required
+                    placeholder="ej. 3001234567"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 text-base rounded-2xl border-2 border-slate-200 focus:border-emerald-600 focus:outline-none bg-slate-50 focus:bg-white transition"
+                  />
+                </div>
               </div>
               <p className="text-xs text-slate-500 mt-1">Te enviaremos un código de 6 dígitos por WhatsApp para validar tu celular.</p>
             </div>
@@ -280,7 +332,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 />
               </div>
               <p className="text-xs text-slate-500 mt-2 text-center">
-                Revisa la conversación de WhatsApp en tu celular <b>{phone}</b>.
+                Revisa la conversación de WhatsApp en tu celular <b>+{getFormattedFullPhone()}</b>.
               </p>
             </div>
 
@@ -305,7 +357,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 onClick={() => setStep('form')}
                 className="text-slate-500 hover:text-slate-700 font-semibold"
               >
-                ← Cambiar número ({phone})
+                ← Cambiar número (+{getFormattedFullPhone()})
               </button>
 
               <button

@@ -14,9 +14,31 @@ interface WhatsAppNumbersModalProps {
   onClose: () => void;
 }
 
+const COUNTRY_CODES = [
+  { code: '57', flag: '🇨🇴', name: 'Colombia (+57)' },
+  { code: '52', flag: '🇲🇽', name: 'México (+52)' },
+  { code: '1', flag: '🇺🇸', name: 'EE.UU. / Canadá (+1)' },
+  { code: '34', flag: '🇪🇸', name: 'España (+34)' },
+  { code: '54', flag: '🇦🇷', name: 'Argentina (+54)' },
+  { code: '56', flag: '🇨🇱', name: 'Chile (+56)' },
+  { code: '51', flag: '🇵🇪', name: 'Perú (+51)' },
+  { code: '593', flag: '🇪🇨', name: 'Ecuador (+593)' },
+  { code: '58', flag: '🇻🇪', name: 'Venezuela (+58)' },
+  { code: '55', flag: '🇧🇷', name: 'Brasil (+55)' },
+  { code: '502', flag: '🇬🇹', name: 'Guatemala (+502)' },
+  { code: '503', flag: '🇸🇻', name: 'El Salvador (+503)' },
+  { code: '504', flag: '🇭🇳', name: 'Honduras (+504)' },
+  { code: '506', flag: '🇨🇷', name: 'Costa Rica (+506)' },
+  { code: '507', flag: '🇵🇦', name: 'Panamá (+507)' },
+  { code: '591', flag: '🇧🇴', name: 'Bolivia (+591)' },
+  { code: '595', flag: '🇵🇾', name: 'Paraguay (+595)' },
+  { code: '598', flag: '🇺🇾', name: 'Uruguay (+598)' },
+];
+
 export const WhatsAppNumbersModal: React.FC<WhatsAppNumbersModalProps> = ({ onClose }) => {
   const [numbers, setNumbers] = useState<WhatsAppNumberItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [countryCode, setCountryCode] = useState('57'); // Predeterminado Colombia (+57)
   const [newPhone, setNewPhone] = useState('');
   const [newLabel, setNewLabel] = useState('Principal');
   const [adding, setAdding] = useState(false);
@@ -43,18 +65,28 @@ export const WhatsAppNumbersModal: React.FC<WhatsAppNumbersModalProps> = ({ onCl
     e.preventDefault();
     setError('');
     setSuccess('');
+
+    const cleanDigits = newPhone.replace(/\D/g, '');
+    if (!cleanDigits) {
+      setError('Por favor ingrese un número telefónico válido.');
+      return;
+    }
+
+    // Check if phone already starts with the country code
+    const finalPhone = cleanDigits.startsWith(countryCode) ? cleanDigits : `${countryCode}${cleanDigits}`;
+
     setAdding(true);
 
     try {
       await apiRequest('/whatsapp-numbers', {
         method: 'POST',
         body: JSON.stringify({
-          phone_number: newPhone,
+          phone_number: finalPhone,
           label: newLabel,
         }),
       });
 
-      setSuccess('Número de WhatsApp agregado con éxito.');
+      setSuccess(`Número (+${finalPhone}) agregado con éxito.`);
       setNewPhone('');
       setNewLabel('Familiar');
       fetchNumbers();
@@ -128,17 +160,33 @@ export const WhatsAppNumbersModal: React.FC<WhatsAppNumbersModalProps> = ({ onCl
               </h3>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Número de Celular</label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="tel"
-                    required
-                    placeholder="ej. 3001234567"
-                    value={newPhone}
-                    onChange={(e) => setNewPhone(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2.5 text-sm rounded-xl border border-slate-300 focus:border-emerald-600 focus:outline-none bg-white"
-                  />
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Indicativo de País y Celular</label>
+                <div className="flex items-center gap-2">
+                  {/* Country Selector */}
+                  <select
+                    value={countryCode}
+                    onChange={(e) => setCountryCode(e.target.value)}
+                    className="py-2.5 px-2 text-sm font-bold rounded-xl border border-slate-300 focus:border-emerald-600 focus:outline-none bg-white shrink-0 cursor-pointer"
+                  >
+                    {COUNTRY_CODES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.flag} +{c.code}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Phone Input */}
+                  <div className="relative flex-1">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type="tel"
+                      required
+                      placeholder="ej. 3001234567"
+                      value={newPhone}
+                      onChange={(e) => setNewPhone(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2.5 text-sm rounded-xl border border-slate-300 focus:border-emerald-600 focus:outline-none bg-white"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -193,7 +241,7 @@ export const WhatsAppNumbersModal: React.FC<WhatsAppNumbersModalProps> = ({ onCl
                       <Phone className="w-5 h-5" />
                     </div>
                     <div>
-                      <p className="font-bold text-slate-900 text-sm">{num.phone_number}</p>
+                      <p className="font-bold text-slate-900 text-sm">+{num.phone_number}</p>
                       <span className="inline-block text-[11px] font-semibold px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md">
                         {num.label}
                       </span>
