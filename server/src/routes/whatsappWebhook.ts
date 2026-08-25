@@ -422,15 +422,15 @@ router.post('/webhook', async (req: Request, res: Response) => {
       const familyName = familyMatch.name || 'Familia';
       console.log(`[${getLocalTimestamp()}] 🔑 [Familia Identificada] Pertenece a: "${familyName}" (ID: ${familyId})`);
 
-      // 3. PASO 3 (0 TOKENS): Si SÍ es usuario registrado y escribe comandos simples o menú ("hola", "menu", "1", "2", "3")
       if (userText) {
         const textLower = userText.toLowerCase().trim();
 
-        if (textLower === 'hola' || textLower === 'ayuda' || textLower === 'menu' || textLower === '1' || textLower === '2' || textLower === '3' || textLower === '4') {
+        // A) MENU DE OPCIONES (0 TOKENS IA)
+        if (textLower === 'hola' || textLower === 'ayuda' || textLower === 'menu' || textLower === 'opciones') {
           console.log(`[${getLocalTimestamp()}] ⚡ [Flujo: Menú Interactivo] 0 Tokens IA usados. Enviando menú estático a +${formattedPhone}`);
           const sent = await sendWhatsAppMessage(
             formattedPhone,
-            `🩺 *¡Hola ${familyName}! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar con Inteligencia Artificial.\n\n📌 *¿Cómo puedo ayudarte hoy?*\n\n1️⃣ *Agendar Cita con Foto o PDF:* Envíame la foto de tu orden médica o examen.\n2️⃣ *Analizar Examen:* Envíame una foto de tus resultados de laboratorio para darte un resumen.\n3️⃣ *Agendar por Texto:* Escríbeme datos de tu cita (ej: *"Cita con el Cardiólogo mañana a las 8am en la Clínica del Country"*).\n4️⃣ *Ver Mis Citas:* Ingresa a la Web App: https://medfamilia.app`
+            `🩺 *¡Hola ${familyName}! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar con Inteligencia Artificial.\n\n📌 *¿Cómo puedo ayudarte hoy?*\n\n1️⃣ *Agendar Cita con Foto o PDF:* Envíame la foto de tu orden médica o examen.\n2️⃣ *Analizar Examen:* Envíame una foto de tus resultados de laboratorio para darte un resumen.\n3️⃣ *Agendar por Texto:* Escríbeme datos de tu cita (ej: *"Cita con el Cardiólogo mañana a las 8am en la Clínica del Country"*).\n4️⃣ *Ver Mis Citas:* Escribe *"ver citas"* o ingresa a https://medfamilia.app`
           );
           if (sent) {
             console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Menú de opciones entregado exitosamente por WhatsApp a +${formattedPhone}`);
@@ -438,7 +438,62 @@ router.post('/webhook', async (req: Request, res: Response) => {
           return res.sendStatus(200);
         }
 
-        // 4. PASO 4 (GEMINI IA TOKENS): Solo si el usuario envía texto descriptivo complejo de cita médica
+        // B) CONSULTAR PRÓXIMAS CITAS (0 TOKENS IA)
+        const isListRequest = 
+          textLower === '4' ||
+          textLower.includes('ver mis') ||
+          textLower.includes('mis citas') ||
+          textLower.includes('proximas citas') ||
+          textLower.includes('ver citas') ||
+          textLower.includes('consultar citas') ||
+          textLower === 'citas';
+
+        if (isListRequest) {
+          console.log(`[${getLocalTimestamp()}] ⚡ [Flujo: Consultar Citas] 0 Tokens IA usados. Consultando próximas citas para +${formattedPhone}`);
+
+          const nowIso = new Date().toISOString();
+          const upcoming = db.prepare(`
+            SELECT a.title, a.date_time, a.specialty, a.specialist, a.location, a.requires_fasting, p.name as patient_name
+            FROM appointments a
+            JOIN patients p ON a.patient_id = p.id
+            WHERE a.family_id = ? AND a.date_time >= ? AND a.status != 'cancelada'
+            ORDER BY a.date_time ASC
+            LIMIT 5
+          `).all(familyId, nowIso) as any[];
+
+          let replyMsg = `🩺 *Próximas Citas Médicas - ${familyName}*\n\n`;
+
+          if (upcoming.length === 0) {
+            replyMsg += `No tienes citas médicas pendientes agendadas por el momento.\n\n💡 *¿Deseas agendar una?*\nEnvíame una foto u orden médica por aquí, o ingresa a la App Web: https://medfamilia.app`;
+          } else {
+            upcoming.forEach((app: any, idx: number) => {
+              const d = new Date(app.date_time);
+              const dateFormatted = d.toLocaleString('es-ES', {
+                weekday: 'short',
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+
+              replyMsg += `${idx + 1}️⃣ *${app.title}* (${app.patient_name})\n`;
+              replyMsg += `📅 ${dateFormatted}\n`;
+              if (app.specialist) replyMsg += `👨‍⚕️ Especialista: ${app.specialist}\n`;
+              if (app.location) replyMsg += `🏥 Lugar: ${app.location}\n`;
+              if (app.requires_fasting) replyMsg += `⚠️ *REQUIERE AYUNO*\n`;
+              replyMsg += `-------------------------\n`;
+            });
+            replyMsg += `📲 Ver todas en la App Web: https://medfamilia.app`;
+          }
+
+          const sent = await sendWhatsAppMessage(formattedPhone, replyMsg);
+          if (sent) {
+            console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Lista de próximas citas entregada por WhatsApp a +${formattedPhone}`);
+          }
+          return res.sendStatus(200);
+        }
+
+        // C) GEMINI IA TOKENS: Solo si el usuario envía texto descriptivo complejo para crear/agendar cita médica
         const allowed = checkAndIncrementAiUsage(familyId);
         if (!allowed) {
           console.log(`[${getLocalTimestamp()}] ⚠️ [Límite Diario] Familia ${familyName} alcanzó la cuota de 15 peticiones de IA por hoy.`);
