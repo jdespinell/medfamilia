@@ -551,13 +551,14 @@ router.post('/webhook', async (req: Request, res: Response) => {
           console.log(`[${getLocalTimestamp()}] 🤖 [Flujo: Asistente Gemini IA] Consultando Inteligencia Artificial con contexto de la familia para +${formattedPhone}...`);
 
           // Fetch full family context for Gemini AI
+          // Fetch full family context for Gemini AI (including photo_url of medical orders in appointments)
           const patients = db.prepare('SELECT id, name FROM patients WHERE family_id = ? ORDER BY created_at ASC').all(familyId) as any[];
           const upcomingAppointments = db.prepare(`
-            SELECT a.title, a.date_time, p.name as patient_name
+            SELECT a.id, a.title, a.date_time, a.photo_url, p.name as patient_name
             FROM appointments a
             JOIN patients p ON a.patient_id = p.id
-            WHERE a.family_id = ? AND a.date_time >= datetime('now') AND a.status != 'cancelada'
-            ORDER BY a.date_time ASC LIMIT 5
+            WHERE a.family_id = ? AND a.status != 'cancelada'
+            ORDER BY a.date_time ASC LIMIT 10
           `).all(familyId) as any[];
 
           const recentExams = db.prepare(`
@@ -565,7 +566,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
             FROM exam_results e
             JOIN patients p ON e.patient_id = p.id
             WHERE e.family_id = ?
-            ORDER BY e.created_at DESC LIMIT 5
+            ORDER BY e.created_at DESC LIMIT 10
           `).all(familyId) as any[];
 
           const aiResult = await processMedicalAssistantQuery(userText, {
@@ -608,33 +609,32 @@ router.post('/webhook', async (req: Request, res: Response) => {
             await sendWhatsAppMessage(formattedPhone, confirmationMsg);
             console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Enviada] Borrador de cita enviado a +${formattedPhone}`);
           } 
-          // 2. INTENT: SOLICITUD DE ARCHIVO FÍSICO DE EXAMEN (FOTO O PDF)
-          else if (aiResult.intent === 'send_exam_file' && aiResult.requestedExamId) {
-            console.log(`[${getLocalTimestamp()}] 📄 [Solicitud de Archivo Examen] Buscando examen ID: ${aiResult.requestedExamId}`);
+          // 2. INTENT: SOLICITUD DE ARCHIVO FÍSICO (ORDEN MÉDICA DE CITA O RESULTADO DE EXAMEN)
+          else if (aiResult.intent === 'send_exam_file' && (aiResult.requestedFileUrl || aiResult.requestedExamId)) {
+            let targetFileUrl = aiResult.requestedFileUrl || '';
 
-            const exam = db.prepare(`
-              SELECT e.*, p.name as patient_name
-              FROM exam_results e
-              JOIN patients p ON e.patient_id = p.id
-              WHERE e.id = ? AND e.family_id = ?
-            `).get(aiResult.requestedExamId, familyId) as any;
+            if (!targetFileUrl && aiResult.requestedExamId) {
+              const exam = db.prepare('SELECT file_url FROM exam_results WHERE id = ? AND family_id = ?').get(aiResult.requestedExamId, familyId) as any;
+              if (exam) targetFileUrl = exam.file_url;
+            }
 
-            if (exam && exam.file_url) {
-              const filename = path.basename(exam.file_url.split('?')[0]);
+            console.log(`[${getLocalTimestamp()}] 📄 [Solicitud de Archivo/Orden] Buscando archivo URL: "${targetFileUrl}"`);
+
+            if (targetFileUrl) {
+              const filename = path.basename(targetFileUrl.split('?')[0]);
               const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
               const localPath = path.join(uploadsDir, filename);
 
               if (fs.existsSync(localPath)) {
                 const fileBuffer = fs.readFileSync(localPath);
-                const isPdf = exam.file_type?.includes('pdf') || filename.toLowerCase().endsWith('.pdf');
-                const mimeType = isPdf ? 'application/pdf' : 'image/jpeg';
-                const base64Media = `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+                const isPdf = filename.toLowerCase().endsWith('.pdf');
+                const base64Media = fileBuffer.toString('base64');
                 const mediaType = isPdf ? 'document' : 'image';
-                const caption = `📄 *Resultado de Examen: ${exam.title}*\n👤 *Paciente:* ${exam.patient_name}\n📅 *Fecha:* ${new Date(exam.created_at).toLocaleDateString('es-ES')}\n\n*MedFamilia*`;
+                const caption = `📄 *Documento / Orden Médica: ${filename}*\n\n*MedFamilia*`;
 
                 const sent = await sendWhatsAppMedia(formattedPhone, base64Media, mediaType, filename, caption);
                 if (sent) {
-                  console.log(`[${getLocalTimestamp()}] ✅ [Archivo Enviado] Archivo del examen "${exam.title}" (${filename}) enviado exitosamente a +${formattedPhone}`);
+                  console.log(`[${getLocalTimestamp()}] ✅ [Archivo Enviado] Documento/Orden "${filename}" enviado exitosamente a +${formattedPhone}`);
                 }
                 return res.sendStatus(200);
               } else {
@@ -642,7 +642,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
               }
             }
 
-            await sendWhatsAppMessage(formattedPhone, `📄 No se encontró el archivo del examen en el servidor. Puedes consultarlo en la App Web: https://medfamilia.app`);
+            await sendWhatsAppMessage(formattedPhone, `📄 No se encontró el archivo físico de la orden o examen en el servidor. Puedes consultarlo en la App Web: https://medfamilia.app`);
           } 
           // 3. INTENT: RESPUESTA CONVERSACIONAL GENERAL DE IA
           else {

@@ -170,12 +170,13 @@ export async function processMedicalAssistantQuery(
   familyContext: {
     familyName: string;
     patients: Array<{ id: string; name: string }>;
-    upcomingAppointments: Array<{ title: string; date_time: string; patient_name?: string }>;
+    upcomingAppointments: Array<{ id?: string; title: string; date_time: string; photo_url?: string; patient_name?: string }>;
     recentExams: Array<{ id?: string; title: string; summary_ai?: string; file_url?: string; file_type?: string; patient_name?: string; created_at: string }>;
   }
 ): Promise<{
   intent: 'appointment' | 'send_exam_file' | 'general_answer';
   appointmentData?: ExtractedAppointmentData;
+  requestedFileUrl?: string;
   requestedExamId?: string;
   answerText?: string;
 }> {
@@ -187,7 +188,7 @@ Eres el Asistente Médico de IA inteligente de la plataforma MedFamilia en Whats
 Nombre de la Familia: "${familyContext.familyName}"
 
 Integrantes de la familia: ${JSON.stringify(familyContext.patients)}
-Citas Próximas Registradas: ${JSON.stringify(familyContext.upcomingAppointments)}
+Citas Próximas Registradas (con fotos/órdenes adjuntas): ${JSON.stringify(familyContext.upcomingAppointments)}
 Exámenes de Laboratorio / Resultados Recientes: ${JSON.stringify(familyContext.recentExams)}
 
 Consulta del usuario por WhatsApp: "${userText}"
@@ -196,8 +197,9 @@ INSTRUCCIONES:
 1. Evalúa si la intención del usuario es CREAR/AGENDAR una NUEVA cita médica (ej: "tengo cita con...", "agendar cita el viernes", "foto de orden", etc.).
    - Si la intención ES crear/agendar una nueva cita médica, devuelve JSON con intent = "appointment" y los datos extraídos en "appointmentData".
 
-2. Evalúa si la intención del usuario es PEDIR QUE LE ENVIEN O MANDEN EL ARCHIVO / FOTO / PDF FÍSICO DE UN EXAMEN (ej: "envíame la foto del examen", "mándame el PDF del examen de sangre", "envíame el archivo del examen de Mamá").
-   - En este caso, devuelve intent = "send_exam_file" y asigna en "requestedExamId" el ID exacto del examen correspondiente de la lista recentExams.
+2. Evalúa si la intención del usuario es PEDIR QUE LE ENVIEN O MANDEN EL ARCHIVO / FOTO / PDF / ORDEN MÉDICA de una cita u examen (ej: "envíame la orden de espirometría", "mándame la foto de la cita", "envíame el PDF del examen de sangre", "envíame el archivo de Mamá").
+   - Revisa las Citas Próximas (propiedad photo_url) Y los Exámenes de Laboratorio (propiedad file_url).
+   - En este caso, devuelve intent = "send_exam_file" y asigna en "requestedFileUrl" la URL exacta del archivo (photo_url de la cita o file_url del examen).
 
 3. Si la intención es CONSULTAR resultados en texto, responder dudas o asistencia médica general, devuelve JSON con intent = "general_answer" y responde amigablemente en "answerText".
 
@@ -217,10 +219,10 @@ Si es para agendar nueva cita:
   }
 }
 
-Si es para enviar el archivo (Foto o PDF) de un examen:
+Si es para enviar la foto, orden o PDF de una cita o examen:
 {
   "intent": "send_exam_file",
-  "requestedExamId": "ID_DEL_EXAMEN_DE_RECENT_EXAMS"
+  "requestedFileUrl": "URL_EXACTA_DE_PHOTO_URL_O_FILE_URL"
 }
 
 Si es para responder a la consulta/exámenes/citas en texto:
