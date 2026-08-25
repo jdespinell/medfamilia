@@ -18,6 +18,15 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:alpine
+    container_name: medfamilia-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+
   evolution-api:
     image: evoapicloud/evolution-api:latest
     container_name: medfamilia-evolution-api
@@ -25,6 +34,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     ports:
       - "0.0.0.0:8085:8080" # Mapeo explícito al puerto 8085 del host
     environment:
@@ -38,6 +49,9 @@ services:
       - DATABASE_CONNECTION_URI=postgresql://${POSTGRES_USER:-medfamilia_user}:${POSTGRES_PASSWORD:-medfamilia_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-medfamilia}?schema=evolution_api
       - DATABASE_CONNECTION_CLIENT_NAME=evolution_exchange
       - DATABASE_SAVE_DATA_INSTANCE=true
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis:6379/6
+      - CACHE_REDIS_PREFIX_KEY=evolution
       - WEBHOOK_GLOBAL_URL=http://medfamilia:3000/api/whatsapp/webhook
       - WEBHOOK_GLOBAL_ENABLED=true
       - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
@@ -54,6 +68,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     ports:
       - "3001:3000" # Consistente con tu puerto actual de MedFamilia (3001)
     environment:
@@ -77,6 +93,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  redis_data:
     driver: local
   evolution_instances:
     driver: local
