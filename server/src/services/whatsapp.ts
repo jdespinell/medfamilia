@@ -41,6 +41,49 @@ export async function sendOtpVerificationCode(toPhone: string, otpCode: string):
   return sendWhatsAppMessage(toPhone, message);
 }
 
+export async function sendWhatsAppMedia(
+  toPhone: string,
+  mediaUrlOrBase64: string,
+  mediaType: 'image' | 'document',
+  fileName: string,
+  caption?: string
+): Promise<boolean> {
+  const evolutionApiUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
+  const evolutionApiKey = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+  const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
+
+  try {
+    const cleanPhone = toPhone.replace(/\D/g, '');
+    const formattedPhone = cleanPhone.length === 10 ? `57${cleanPhone}` : cleanPhone;
+
+    const response = await fetch(`${evolutionApiUrl}/message/sendMedia/${instanceName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': evolutionApiKey,
+      },
+      body: JSON.stringify({
+        number: formattedPhone,
+        media: mediaUrlOrBase64,
+        mediatype: mediaType,
+        fileName: fileName,
+        caption: caption || '',
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('Error enviando archivo multimedia por WhatsApp:', errText);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error enviando media por WhatsApp:', error);
+    return false;
+  }
+}
+
 export async function ensureWhatsAppWebhook(): Promise<boolean> {
   const evolutionApiUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
   const evolutionApiKey = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';

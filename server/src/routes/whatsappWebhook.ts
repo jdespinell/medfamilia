@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { sendWhatsAppMessage, ensureWhatsAppWebhook } from '../services/whatsapp.js';
+import fs from 'fs';
+import path from 'path';
+import { sendWhatsAppMessage, sendWhatsAppMedia, ensureWhatsAppWebhook } from '../services/whatsapp.js';
 import { extractAppointmentFromText, processMedicalAssistantQuery, ExtractedAppointmentData } from '../services/gemini.js';
 import { syncAppointmentToGoogleCalendar } from '../services/googleCalendar.js';
 import db from '../database/db.js';
@@ -327,7 +329,7 @@ router.get('/pairing-code', async (req: Request, res: Response) => {
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <style>
             body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background: #f3f4f6; margin: 0; padding: 20px; text-align: center; }
-            .card { background: white; padding: 30px; border-radius: 16px; shadow-box: 0 10px 25px rgba(0,0,0,0.1); max-width: 420px; }
+            .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 420px; }
             .code-box { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #1e40af; background: #eff6ff; border: 2px dashed #3b82f6; padding: 15px 20px; border-radius: 12px; margin: 20px 0; font-family: monospace; }
             h2 { color: #1e40af; margin-top: 0; }
             ol { text-align: left; color: #374151; font-size: 14px; line-height: 1.6; padding-left: 20px; }
@@ -526,7 +528,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
           console.log(`[${getLocalTimestamp()}] ⚡ [Flujo: Menú Interactivo] 0 Tokens IA usados. Enviando menú estático a +${formattedPhone}`);
           const sent = await sendWhatsAppMessage(
             formattedPhone,
-            `🩺 *¡Hola ${familyName}! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar con Inteligencia Artificial.\n\n📌 *¿En qué te puedo ayudar hoy?*\n\n1️⃣ *Agendar Cita con Foto o PDF:* Envíame la foto de tu orden médica o examen.\n2️⃣ *Analizar Examen:* Envíame una foto de tus resultados de laboratorio para darte un resumen.\n3️⃣ *Escribir Cita:* Escríbeme datos de tu cita (ej: *"Cita con el Cardiólogo mañana a las 8am"*).\n4️⃣ *Consultar Citas / Exámenes:* Pregúntame por tus últimas citas o exámenes por aquí.`
+            `🩺 *¡Hola ${familyName}! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar con Inteligencia Artificial.\n\n📌 *¿En qué te puedo ayudar hoy?*\n\n1️⃣ *Agendar Cita con Foto o PDF:* Envíame la foto de tu orden médica o examen.\n2️⃣ *Analizar Examen:* Envíame una foto de tus resultados de laboratorio para darte un resumen.\n3️⃣ *Escribir Cita:* Escríbeme datos de tu cita (ej: *"Cita con el Cardiólogo mañana a las 8am"*).\n4️⃣ *Consultar Citas / Exámenes:* Pregúntame por tus últimas citas o resultados de examen por aquí.`
           );
           if (sent) {
             console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Menú de opciones entregado exitosamente por WhatsApp a +${formattedPhone}`);
@@ -559,7 +561,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
           `).all(familyId) as any[];
 
           const recentExams = db.prepare(`
-            SELECT e.title, e.summary_ai, e.created_at, p.name as patient_name
+            SELECT e.id, e.title, e.summary_ai, e.file_url, e.file_type, e.created_at, p.name as patient_name
             FROM exam_results e
             JOIN patients p ON e.patient_id = p.id
             WHERE e.family_id = ?
@@ -573,6 +575,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
             recentExams
           });
 
+          // 1. INTENT: CREAR NUEVA CITA
           if (aiResult.intent === 'appointment' && aiResult.appointmentData) {
             const extracted = aiResult.appointmentData;
             console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Cita] Título: "${extracted.title}" | Fecha: "${extracted.date_time}" | Especialidad: "${extracted.specialty}"`);
@@ -604,8 +607,45 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
             await sendWhatsAppMessage(formattedPhone, confirmationMsg);
             console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Enviada] Borrador de cita enviado a +${formattedPhone}`);
-          } else {
-            // General Conversational AI Answer (Exam results, appointments info, health advice)
+          } 
+          // 2. INTENT: SOLICITUD DE ARCHIVO FÍSICO DE EXAMEN (FOTO O PDF)
+          else if (aiResult.intent === 'send_exam_file' && aiResult.requestedExamId) {
+            console.log(`[${getLocalTimestamp()}] 📄 [Solicitud de Archivo Examen] Buscando examen ID: ${aiResult.requestedExamId}`);
+
+            const exam = db.prepare(`
+              SELECT e.*, p.name as patient_name
+              FROM exam_results e
+              JOIN patients p ON e.patient_id = p.id
+              WHERE e.id = ? AND e.family_id = ?
+            `).get(aiResult.requestedExamId, familyId) as any;
+
+            if (exam && exam.file_url) {
+              let localPath = exam.file_url;
+              if (localPath.startsWith('/uploads/') || localPath.startsWith('uploads/')) {
+                localPath = path.join(process.cwd(), localPath.replace(/^\//, ''));
+              }
+
+              if (fs.existsSync(localPath)) {
+                const fileBuffer = fs.readFileSync(localPath);
+                const isPdf = exam.file_type?.includes('pdf') || exam.file_url.endsWith('.pdf');
+                const mimeType = isPdf ? 'application/pdf' : 'image/jpeg';
+                const base64Media = `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+                const fileName = path.basename(localPath);
+                const mediaType = isPdf ? 'document' : 'image';
+                const caption = `📄 *Resultado de Examen: ${exam.title}*\n👤 *Paciente:* ${exam.patient_name}\n📅 *Fecha:* ${new Date(exam.created_at).toLocaleDateString('es-ES')}\n\n*MedFamilia*`;
+
+                const sent = await sendWhatsAppMedia(formattedPhone, base64Media, mediaType, fileName, caption);
+                if (sent) {
+                  console.log(`[${getLocalTimestamp()}] ✅ [Archivo Enviado] Archivo del examen "${exam.title}" enviado exitosamente a +${formattedPhone}`);
+                }
+                return res.sendStatus(200);
+              }
+            }
+
+            await sendWhatsAppMessage(formattedPhone, `📄 No se encontró el archivo del examen en el servidor. Puedes consultarlo en la App Web: https://medfamilia.app`);
+          } 
+          // 3. INTENT: RESPUESTA CONVERSACIONAL GENERAL DE IA
+          else {
             const answer = aiResult.answerText || 'Recibí tu consulta. Para agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.';
             console.log(`[${getLocalTimestamp()}] ✨ [IA Respuesta Inteligente] Entregando respuesta conversacional a +${formattedPhone}`);
 

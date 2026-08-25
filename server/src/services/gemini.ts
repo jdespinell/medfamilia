@@ -171,11 +171,12 @@ export async function processMedicalAssistantQuery(
     familyName: string;
     patients: Array<{ id: string; name: string }>;
     upcomingAppointments: Array<{ title: string; date_time: string; patient_name?: string }>;
-    recentExams: Array<{ title: string; summary_ai?: string; patient_name?: string; created_at: string }>;
+    recentExams: Array<{ id?: string; title: string; summary_ai?: string; file_url?: string; file_type?: string; patient_name?: string; created_at: string }>;
   }
 ): Promise<{
-  intent: 'appointment' | 'general_answer';
+  intent: 'appointment' | 'send_exam_file' | 'general_answer';
   appointmentData?: ExtractedAppointmentData;
+  requestedExamId?: string;
   answerText?: string;
 }> {
   const ai = getAiInstance();
@@ -195,7 +196,10 @@ INSTRUCCIONES:
 1. Evalúa si la intención del usuario es CREAR/AGENDAR una NUEVA cita médica (ej: "tengo cita con...", "agendar cita el viernes", "foto de orden", etc.).
    - Si la intención ES crear/agendar una nueva cita médica, devuelve JSON con intent = "appointment" y los datos extraídos en "appointmentData".
 
-2. Si la intención NO es crear una nueva cita, sino CONSULTAR exámenes, preguntar por sus resultados, consultar sus próximas citas existentes o hacer una pregunta de salud/asistencia, devuelve JSON con intent = "general_answer" y responde amigablemente de forma estructurada en "answerText" usando la información del contexto familiar.
+2. Evalúa si la intención del usuario es PEDIR QUE LE ENVIEN O MANDEN EL ARCHIVO / FOTO / PDF FÍSICO DE UN EXAMEN (ej: "envíame la foto del examen", "mándame el PDF del examen de sangre", "envíame el archivo del examen de Mamá").
+   - En este caso, devuelve intent = "send_exam_file" y asigna en "requestedExamId" el ID exacto del examen correspondiente de la lista recentExams.
+
+3. Si la intención es CONSULTAR resultados en texto, responder dudas o asistencia médica general, devuelve JSON con intent = "general_answer" y responde amigablemente en "answerText".
 
 ESTRUCTURA EXCLUSIVA JSON ESPERADA:
 Si es para agendar nueva cita:
@@ -213,7 +217,13 @@ Si es para agendar nueva cita:
   }
 }
 
-Si es para responder a la consulta/exámenes/citas:
+Si es para enviar el archivo (Foto o PDF) de un examen:
+{
+  "intent": "send_exam_file",
+  "requestedExamId": "ID_DEL_EXAMEN_DE_RECENT_EXAMS"
+}
+
+Si es para responder a la consulta/exámenes/citas en texto:
 {
   "intent": "general_answer",
   "answerText": "Tu respuesta amigable en markdown estructurada con emoticones..."
