@@ -9,7 +9,7 @@ export async function sendWhatsAppMessage(toPhone: string, text: string): Promis
 
   try {
     const cleanPhone = toPhone.replace(/\D/g, '');
-    const formattedPhone = cleanPhone.startsWith('57') ? cleanPhone : `57${cleanPhone}`;
+    const formattedPhone = cleanPhone.length === 10 ? `57${cleanPhone}` : cleanPhone;
 
     const response = await fetch(`${evolutionApiUrl}/message/sendText/${instanceName}`, {
       method: 'POST',

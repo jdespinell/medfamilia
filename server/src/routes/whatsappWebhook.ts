@@ -359,8 +359,8 @@ router.post('/webhook', async (req: Request, res: Response) => {
         return res.sendStatus(200);
       }
 
-      const rawSender = (eventData?.sender || remoteJid || '').toString();
-      const cleanDigits = rawSender.replace(/@.*$/, '').replace(/\D/g, '');
+      const senderJid = messageObj?.key?.remoteJid || messageObj?.key?.remoteJidAlt || '';
+      const cleanDigits = senderJid.replace(/@.*$/, '').replace(/\D/g, '');
       const formattedPhone = cleanDigits.length === 10 ? `57${cleanDigits}` : cleanDigits;
 
       const userText = messageObj?.message?.conversation || 
