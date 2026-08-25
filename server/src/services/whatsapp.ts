@@ -56,6 +56,12 @@ export async function sendWhatsAppMedia(
     const cleanPhone = toPhone.replace(/\D/g, '');
     const formattedPhone = cleanPhone.length === 10 ? `57${cleanPhone}` : cleanPhone;
 
+    const cleanMedia = mediaUrlOrBase64.startsWith('data:')
+      ? mediaUrlOrBase64.replace(/^data:[^;]+;base64,/, '')
+      : mediaUrlOrBase64;
+
+    const mimeType = mediaType === 'document' ? 'application/pdf' : 'image/jpeg';
+
     const response = await fetch(`${evolutionApiUrl}/message/sendMedia/${instanceName}`, {
       method: 'POST',
       headers: {
@@ -64,8 +70,9 @@ export async function sendWhatsAppMedia(
       },
       body: JSON.stringify({
         number: formattedPhone,
-        media: mediaUrlOrBase64,
+        media: cleanMedia,
         mediatype: mediaType,
+        mimetype: mimeType,
         fileName: fileName,
         caption: caption || '',
       }),
