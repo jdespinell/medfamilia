@@ -161,3 +161,78 @@ Mantén un tono tranquilizador, informativo y respetuoso.
     throw err;
   }
 }
+
+/**
+ * Intelligent Conversational Assistant for WhatsApp queries (Exams, Appointments, General Health)
+ */
+export async function processMedicalAssistantQuery(
+  userText: string,
+  familyContext: {
+    familyName: string;
+    patients: Array<{ id: string; name: string }>;
+    upcomingAppointments: Array<{ title: string; date_time: string; patient_name?: string }>;
+    recentExams: Array<{ title: string; summary_ai?: string; patient_name?: string; created_at: string }>;
+  }
+): Promise<{
+  intent: 'appointment' | 'general_answer';
+  appointmentData?: ExtractedAppointmentData;
+  answerText?: string;
+}> {
+  const ai = getAiInstance();
+  const model = getModelName();
+
+  const prompt = `
+Eres el Asistente Médico de IA inteligente de la plataforma MedFamilia en WhatsApp.
+Nombre de la Familia: "${familyContext.familyName}"
+
+Integrantes de la familia: ${JSON.stringify(familyContext.patients)}
+Citas Próximas Registradas: ${JSON.stringify(familyContext.upcomingAppointments)}
+Exámenes de Laboratorio / Resultados Recientes: ${JSON.stringify(familyContext.recentExams)}
+
+Consulta del usuario por WhatsApp: "${userText}"
+
+INSTRUCCIONES:
+1. Evalúa si la intención del usuario es CREAR/AGENDAR una NUEVA cita médica (ej: "tengo cita con...", "agendar cita el viernes", "foto de orden", etc.).
+   - Si la intención ES crear/agendar una nueva cita médica, devuelve JSON con intent = "appointment" y los datos extraídos en "appointmentData".
+
+2. Si la intención NO es crear una nueva cita, sino CONSULTAR exámenes, preguntar por sus resultados, consultar sus próximas citas existentes o hacer una pregunta de salud/asistencia, devuelve JSON con intent = "general_answer" y responde amigablemente de forma estructurada en "answerText" usando la información del contexto familiar.
+
+ESTRUCTURA EXCLUSIVA JSON ESPERADA:
+Si es para agendar nueva cita:
+{
+  "intent": "appointment",
+  "appointmentData": {
+    "title": "Título corto de la cita",
+    "appointment_type": "consulta",
+    "specialist": "Dr...",
+    "specialty": "Especialidad",
+    "location": "Clínica...",
+    "date_time": "YYYY-MM-DDTHH:mm",
+    "requires_fasting": false,
+    "prep_instructions": "..."
+  }
+}
+
+Si es para responder a la consulta/exámenes/citas:
+{
+  "intent": "general_answer",
+  "answerText": "Tu respuesta amigable en markdown estructurada con emoticones..."
+}
+`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: prompt,
+    });
+
+    const responseText = response.text || '';
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    const cleanJson = jsonMatch ? jsonMatch[0] : responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (err: any) {
+    console.error(`Error procesando asistente de IA con Gemini [${model}]:`, err);
+    throw err;
+  }
+}
+

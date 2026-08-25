@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { sendWhatsAppMessage, ensureWhatsAppWebhook } from '../services/whatsapp.js';
-import { extractAppointmentFromText } from '../services/gemini.js';
+import { extractAppointmentFromText, processMedicalAssistantQuery, ExtractedAppointmentData } from '../services/gemini.js';
 import { syncAppointmentToGoogleCalendar } from '../services/googleCalendar.js';
 import db from '../database/db.js';
 
@@ -25,15 +25,7 @@ interface PendingAppointmentDraft {
   familyId: string;
   patientId: string;
   patientName: string;
-  extracted: {
-    title: string;
-    specialty?: string;
-    specialist?: string;
-    location?: string;
-    date_time: string;
-    requires_fasting?: boolean;
-    prep_instructions?: string;
-  };
+  extracted: ExtractedAppointmentData;
   timestamp: number;
 }
 
@@ -335,7 +327,7 @@ router.get('/pairing-code', async (req: Request, res: Response) => {
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <style>
             body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background: #f3f4f6; margin: 0; padding: 20px; text-align: center; }
-            .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 420px; }
+            .card { background: white; padding: 30px; border-radius: 16px; shadow-box: 0 10px 25px rgba(0,0,0,0.1); max-width: 420px; }
             .code-box { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #1e40af; background: #eff6ff; border: 2px dashed #3b82f6; padding: 15px 20px; border-radius: 12px; margin: 20px 0; font-family: monospace; }
             h2 { color: #1e40af; margin-top: 0; }
             ol { text-align: left; color: #374151; font-size: 14px; line-height: 1.6; padding-left: 20px; }
@@ -527,12 +519,14 @@ router.post('/webhook', async (req: Request, res: Response) => {
           }
         }
 
-        // B) MENU DE OPCIONES (0 TOKENS IA)
-        if (textLower === 'hola' || textLower === 'ayuda' || textLower === 'menu' || textLower === 'opciones') {
+        // B) UNICAMENTE SALUDOS Y MENÚS ESTÁTICOS (0 TOKENS IA)
+        const isStrictGreeting = ['hola', 'menu', 'menú', 'ayuda', 'opciones', 'inicio'].includes(textLower);
+
+        if (isStrictGreeting) {
           console.log(`[${getLocalTimestamp()}] ⚡ [Flujo: Menú Interactivo] 0 Tokens IA usados. Enviando menú estático a +${formattedPhone}`);
           const sent = await sendWhatsAppMessage(
             formattedPhone,
-            `🩺 *¡Hola ${familyName}! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar con Inteligencia Artificial.\n\n📌 *¿Cómo puedo ayudarte hoy?*\n\n1️⃣ *Agendar Cita con Foto o PDF:* Envíame la foto de tu orden médica o examen.\n2️⃣ *Analizar Examen:* Envíame una foto de tus resultados de laboratorio para darte un resumen.\n3️⃣ *Agendar por Texto:* Escríbeme datos de tu cita (ej: *"Cita con el Cardiólogo mañana a las 8am en la Clínica del Country"*).\n4️⃣ *Ver Mis Citas:* Escribe *"ver citas"* o ingresa a https://medfamilia.app`
+            `🩺 *¡Hola ${familyName}! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar con Inteligencia Artificial.\n\n📌 *¿En qué te puedo ayudar hoy?*\n\n1️⃣ *Agendar Cita con Foto o PDF:* Envíame la foto de tu orden médica o examen.\n2️⃣ *Analizar Examen:* Envíame una foto de tus resultados de laboratorio para darte un resumen.\n3️⃣ *Escribir Cita:* Escríbeme datos de tu cita (ej: *"Cita con el Cardiólogo mañana a las 8am"*).\n4️⃣ *Consultar Citas / Exámenes:* Pregúntame por tus últimas citas o exámenes por aquí.`
           );
           if (sent) {
             console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Menú de opciones entregado exitosamente por WhatsApp a +${formattedPhone}`);
@@ -540,62 +534,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
           return res.sendStatus(200);
         }
 
-        // C) CONSULTAR PRÓXIMAS CITAS (0 TOKENS IA)
-        const isListRequest = 
-          textLower === '4' ||
-          textLower.includes('ver mis') ||
-          textLower.includes('mis citas') ||
-          textLower.includes('proximas citas') ||
-          textLower.includes('ver citas') ||
-          textLower.includes('consultar citas') ||
-          textLower === 'citas';
-
-        if (isListRequest) {
-          console.log(`[${getLocalTimestamp()}] ⚡ [Flujo: Consultar Citas] 0 Tokens IA usados. Consultando próximas citas para +${formattedPhone}`);
-
-          const nowIso = new Date().toISOString();
-          const upcoming = db.prepare(`
-            SELECT a.title, a.date_time, a.specialty, a.specialist, a.location, a.requires_fasting, p.name as patient_name
-            FROM appointments a
-            JOIN patients p ON a.patient_id = p.id
-            WHERE a.family_id = ? AND a.date_time >= ? AND a.status != 'cancelada'
-            ORDER BY a.date_time ASC
-            LIMIT 5
-          `).all(familyId, nowIso) as any[];
-
-          let replyMsg = `🩺 *Próximas Citas Médicas - ${familyName}*\n\n`;
-
-          if (upcoming.length === 0) {
-            replyMsg += `No tienes citas médicas pendientes agendadas por el momento.\n\n💡 *¿Deseas agendar una?*\nEnvíame una foto u orden médica por aquí, o ingresa a la App Web: https://medfamilia.app`;
-          } else {
-            upcoming.forEach((app: any, idx: number) => {
-              const d = new Date(app.date_time);
-              const dateFormatted = d.toLocaleString('es-ES', {
-                weekday: 'short',
-                day: 'numeric',
-                month: 'short',
-                hour: '2-digit',
-                minute: '2-digit'
-              });
-
-              replyMsg += `${idx + 1}️⃣ *${app.title}* (${app.patient_name})\n`;
-              replyMsg += `📅 ${dateFormatted}\n`;
-              if (app.specialist) replyMsg += `👨‍⚕️ Especialista: ${app.specialist}\n`;
-              if (app.location) replyMsg += `🏥 Lugar: ${app.location}\n`;
-              if (app.requires_fasting) replyMsg += `⚠️ *REQUIERE AYUNO*\n`;
-              replyMsg += `-------------------------\n`;
-            });
-            replyMsg += `📲 Ver todas en la App Web: https://medfamilia.app`;
-          }
-
-          const sent = await sendWhatsAppMessage(formattedPhone, replyMsg);
-          if (sent) {
-            console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Lista de próximas citas entregada por WhatsApp a +${formattedPhone}`);
-          }
-          return res.sendStatus(200);
-        }
-
-        // D) GEMINI IA TOKENS: Extracción de Cita por IA + Solicitud de Confirmación
+        // C) TODAS LAS DEMÁS PREGUNTAS Y TEXTOS EN LENGUAJE NATURAL PASAN POR LA IA DE GEMINI
         const allowed = checkAndIncrementAiUsage(familyId);
         if (!allowed) {
           console.log(`[${getLocalTimestamp()}] ⚠️ [Límite Diario] Familia ${familyName} alcanzó la cuota de 15 peticiones de IA por hoy.`);
@@ -607,44 +546,74 @@ router.post('/webhook', async (req: Request, res: Response) => {
         }
 
         try {
-          console.log(`[${getLocalTimestamp()}] 🤖 [Flujo: Gemini IA] Analizando cita médica con Inteligencia Artificial para +${formattedPhone}...`);
-          const extracted = await extractAppointmentFromText(userText);
-          console.log(`[${getLocalTimestamp()}] ✨ [IA Éxito] Título: "${extracted.title}" | Fecha: "${extracted.date_time}" | Especialidad: "${extracted.specialty}"`);
+          console.log(`[${getLocalTimestamp()}] 🤖 [Flujo: Asistente Gemini IA] Consultando Inteligencia Artificial con contexto de la familia para +${formattedPhone}...`);
 
-          // Find default family patient (Papá/Mamá/First patient)
-          const familyPatients = db.prepare('SELECT id, name FROM patients WHERE family_id = ? ORDER BY created_at ASC').all(familyId) as any[];
-          const patientId = familyPatients[0]?.id || uuidv4();
-          const patientName = familyPatients[0]?.name || 'Familiar';
+          // Fetch full family context for Gemini AI
+          const patients = db.prepare('SELECT id, name FROM patients WHERE family_id = ? ORDER BY created_at ASC').all(familyId) as any[];
+          const upcomingAppointments = db.prepare(`
+            SELECT a.title, a.date_time, p.name as patient_name
+            FROM appointments a
+            JOIN patients p ON a.patient_id = p.id
+            WHERE a.family_id = ? AND a.date_time >= datetime('now') AND a.status != 'cancelada'
+            ORDER BY a.date_time ASC LIMIT 5
+          `).all(familyId) as any[];
 
-          // Save draft in pendingConfirmations
-          pendingAppointmentDrafts.set(formattedPhone, {
-            familyId,
-            patientId,
-            patientName,
-            extracted: {
-              ...extracted,
-              date_time: extracted.date_time || new Date().toISOString()
-            },
-            timestamp: Date.now()
+          const recentExams = db.prepare(`
+            SELECT e.title, e.summary_ai, e.created_at, p.name as patient_name
+            FROM exam_results e
+            JOIN patients p ON e.patient_id = p.id
+            WHERE e.family_id = ?
+            ORDER BY e.created_at DESC LIMIT 5
+          `).all(familyId) as any[];
+
+          const aiResult = await processMedicalAssistantQuery(userText, {
+            familyName,
+            patients,
+            upcomingAppointments,
+            recentExams
           });
 
-          const dateVal = extracted.date_time || new Date().toISOString();
-          const dateFormatted = new Date(dateVal).toLocaleString('es-ES', {
-            weekday: 'short',
-            day: 'numeric',
-            month: 'short',
-            hour: '2-digit',
-            minute: '2-digit'
-          });
+          if (aiResult.intent === 'appointment' && aiResult.appointmentData) {
+            const extracted = aiResult.appointmentData;
+            console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Cita] Título: "${extracted.title}" | Fecha: "${extracted.date_time}" | Especialidad: "${extracted.specialty}"`);
 
-          const confirmationMsg = `📋 *CONFIRMACIÓN DE CITA MÉDICA*\n\nIdentifiqué los siguientes datos:\n\n📌 *Cita:* ${extracted.title}\n👤 *Paciente:* ${patientName}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha y Hora:* ${dateFormatted}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n⚠️ *Ayuno:* ${extracted.requires_fasting ? 'Sí (Requiere Ayuno)' : 'No'}\n\n------------------------------------\n👇 *¿Deseas confirmar y guardar esta cita?*\n1️⃣ Escribe *1* o *SI* para Confirmar y Agendar\n2️⃣ Escribe *2* o *CANCELAR* para Descartar`;
+            const patientId = patients[0]?.id || uuidv4();
+            const patientName = patients[0]?.name || 'Familiar';
 
-          const sent = await sendWhatsAppMessage(formattedPhone, confirmationMsg);
-          if (sent) {
-            console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Enviada] Borrador de cita enviado a +${formattedPhone} esperando confirmación.`);
+            pendingAppointmentDrafts.set(formattedPhone, {
+              familyId,
+              patientId,
+              patientName,
+              extracted: {
+                ...extracted,
+                date_time: extracted.date_time || new Date().toISOString()
+              },
+              timestamp: Date.now()
+            });
+
+            const dateVal = extracted.date_time || new Date().toISOString();
+            const dateFormatted = new Date(dateVal).toLocaleString('es-ES', {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+
+            const confirmationMsg = `📋 *CONFIRMACIÓN DE CITA MÉDICA*\n\nIdentifiqué los siguientes datos:\n\n📌 *Cita:* ${extracted.title}\n👤 *Paciente:* ${patientName}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha y Hora:* ${dateFormatted}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n⚠️ *Ayuno:* ${extracted.requires_fasting ? 'Sí (Requiere Ayuno)' : 'No'}\n\n------------------------------------\n👇 *¿Deseas confirmar y guardar esta cita?*\n1️⃣ Escribe *1* o *SI* para Confirmar y Agendar\n2️⃣ Escribe *2* o *CANCELAR* para Descartar`;
+
+            await sendWhatsAppMessage(formattedPhone, confirmationMsg);
+            console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Enviada] Borrador de cita enviado a +${formattedPhone}`);
+          } else {
+            // General Conversational AI Answer (Exam results, appointments info, health advice)
+            const answer = aiResult.answerText || 'Recibí tu consulta. Para agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.';
+            console.log(`[${getLocalTimestamp()}] ✨ [IA Respuesta Inteligente] Entregando respuesta conversacional a +${formattedPhone}`);
+
+            await sendWhatsAppMessage(formattedPhone, answer);
+            console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Respuesta conversacional de Gemini enviada por WhatsApp a +${formattedPhone}`);
           }
         } catch (aiErr: any) {
-          console.error(`[${getLocalTimestamp()}] ❌ [Error IA] Fallo procesando texto con Gemini:`, aiErr?.message || aiErr);
+          console.error(`[${getLocalTimestamp()}] ❌ [Error IA] Fallo procesando consulta con Gemini:`, aiErr?.message || aiErr);
           await sendWhatsAppMessage(formattedPhone, 'Recibí tu mensaje. Si deseas agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.');
         }
       }
