@@ -36,16 +36,25 @@ const pendingAppointmentDrafts = new Map<string, PendingAppointmentDraft>();
 function checkAndIncrementAiUsage(familyId: string): boolean {
   try {
     const today = new Date().toISOString().split('T')[0];
+
+    // Fetch family dynamic daily limit
+    const familyRecord = db.prepare('SELECT max_daily_whatsapp_queries, plan_type FROM families WHERE id = ?').get(familyId) as any;
+    let maxAllowed = familyRecord?.max_daily_whatsapp_queries;
+    if (typeof maxAllowed !== 'number' || maxAllowed <= 0) {
+      maxAllowed = familyRecord?.plan_type === 'pago' ? 50 : 5;
+    }
+
     const existing = db.prepare('SELECT request_count FROM whatsapp_ai_usage WHERE family_id = ? AND request_date = ?').get(familyId, today) as any;
 
     if (!existing) {
+      if (maxAllowed <= 0) return false;
       db.prepare('INSERT INTO whatsapp_ai_usage (id, family_id, request_date, request_count) VALUES (?, ?, ?, 1)').run(
         `${familyId}-${today}`, familyId, today
       );
       return true;
     }
 
-    if (existing.request_count >= MAX_DAILY_AI_REQUESTS) {
+    if (existing.request_count >= maxAllowed) {
       return false; // Limit reached!
     }
 

@@ -14,6 +14,7 @@ import pushRoutes from './routes/push.js';
 import specialtyRoutes from './routes/specialties.js';
 import whatsappNumbersRoutes from './routes/whatsappNumbers.js';
 import whatsappWebhookRoutes from './routes/whatsappWebhook.js';
+import adminRoutes from './routes/admin.js';
 import { authMiddleware, AuthRequest } from './middleware/auth.js';
 import { authRateLimiter, generalRateLimiter } from './middleware/rateLimiter.js';
 import { ensureWhatsAppWebhook } from './services/whatsapp.js';
@@ -121,6 +122,7 @@ app.use('/api/push', pushRoutes);
 app.use('/api/specialties', specialtyRoutes);
 app.use('/api/whatsapp-numbers', whatsappNumbersRoutes);
 app.use('/api/whatsapp', whatsappWebhookRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

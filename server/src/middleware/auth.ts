@@ -20,6 +20,9 @@ export interface AuthRequest extends Request {
     phone_number?: string;
     subscription_status?: string;
     subscription_expires_at?: string;
+    plan_type?: 'gratuito' | 'pago';
+    max_daily_whatsapp_queries?: number;
+    is_admin?: boolean;
   };
 }
 
@@ -46,7 +49,7 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
     }
 
     // Verify family active status / existence in DB
-    const family = db.prepare('SELECT id, code, name FROM families WHERE id = ?').get(decoded.id) as any;
+    const family = db.prepare('SELECT id, code, name, phone_number, subscription_status, subscription_expires_at, plan_type, max_daily_whatsapp_queries, is_admin FROM families WHERE id = ?').get(decoded.id) as any;
     if (!family) {
       return res.status(401).json({ error: 'La cuenta familiar ya no existe o fue deshabilitada.' });
     }
@@ -55,11 +58,25 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
       id: family.id,
       code: family.code,
       name: family.name,
-      phone_number: decoded.phone_number,
+      phone_number: family.phone_number,
+      subscription_status: family.subscription_status,
+      subscription_expires_at: family.subscription_expires_at,
+      plan_type: family.plan_type || 'gratuito',
+      max_daily_whatsapp_queries: family.max_daily_whatsapp_queries ?? 5,
+      is_admin: family.is_admin === 1,
     };
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Sesión expirada o inválida.' });
   }
+}
+
+export function adminMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
+  authMiddleware(req, res, () => {
+    if (!req.family?.is_admin) {
+      return res.status(403).json({ error: 'Acceso denegado. Se requieren permisos de administrador.' });
+    }
+    next();
+  });
 }
 

@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS families (
   subscription_status VARCHAR(32) NOT NULL DEFAULT 'trial', -- 'active', 'trial', 'pending_approval', 'expired'
   subscription_expires_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP + INTERVAL '7 days',
   payment_receipt_url TEXT,
+  plan_type VARCHAR(32) NOT NULL DEFAULT 'gratuito', -- 'gratuito', 'pago'
+  max_daily_whatsapp_queries INT NOT NULL DEFAULT 5,
+  is_admin INT NOT NULL DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

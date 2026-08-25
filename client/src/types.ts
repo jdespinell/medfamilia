@@ -2,6 +2,21 @@ export interface Family {
   id: string;
   code: string;
   name: string;
+  phone_number?: string;
+  subscription_status?: string;
+  subscription_expires_at?: string;
+  plan_type?: 'gratuito' | 'pago';
+  max_daily_whatsapp_queries?: number;
+  is_admin?: boolean;
+  queries_used_today?: number;
+  created_at?: string;
+}
+
+export interface AdminStats {
+  total_families: number;
+  paid_families: number;
+  free_families: number;
+  total_queries_today: number;
 }
 
 export interface Patient {
