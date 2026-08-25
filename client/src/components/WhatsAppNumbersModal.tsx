@@ -72,8 +72,8 @@ export const WhatsAppNumbersModal: React.FC<WhatsAppNumbersModalProps> = ({ onCl
       return;
     }
 
-    // Check if phone already starts with the country code
-    const finalPhone = cleanDigits.startsWith(countryCode) ? cleanDigits : `${countryCode}${cleanDigits}`;
+    // Prepend country code only if cleanDigits is 10 digits (local format)
+    const finalPhone = cleanDigits.length === 10 ? `${countryCode}${cleanDigits}` : cleanDigits;
 
     setAdding(true);
 

@@ -38,7 +38,7 @@ router.post('/', (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'El número de celular debe contener una cantidad válida de dígitos.' });
     }
 
-    const formattedPhone = cleanPhone.startsWith('57') ? cleanPhone : `57${cleanPhone}`;
+    const formattedPhone = cleanPhone.length === 10 ? `57${cleanPhone}` : cleanPhone;
 
     // Check count (Max 4 limit enforcement)
     const existingCount = (db.prepare('SELECT COUNT(*) as count FROM family_whatsapp_numbers WHERE family_id = ?').get(familyId) as any)?.count || 0;

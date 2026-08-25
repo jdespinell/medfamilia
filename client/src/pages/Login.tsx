@@ -44,7 +44,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
   const getFormattedFullPhone = () => {
     const cleanDigits = phone.replace(/\D/g, '');
-    return cleanDigits.startsWith(countryCode) ? cleanDigits : `${countryCode}${cleanDigits}`;
+    return cleanDigits.length === 10 ? `${countryCode}${cleanDigits}` : cleanDigits;
   };
 
   // Step 1: Send WhatsApp OTP Code
