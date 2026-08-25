@@ -55,10 +55,12 @@ export async function ensureWhatsAppWebhook(): Promise<boolean> {
         'apikey': evolutionApiKey,
       },
       body: JSON.stringify({
-        enabled: true,
-        url: webhookUrl,
-        byEvents: false,
-        events: ['MESSAGES_UPSERT']
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          byEvents: false,
+          events: ['MESSAGES_UPSERT']
+        }
       }),
     });
 
