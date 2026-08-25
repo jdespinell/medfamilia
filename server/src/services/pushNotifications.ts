@@ -1,20 +1,21 @@
 import webpush from 'web-push';
 import db from '../database/db.js';
 
-const defaultPublicKey = 'BL8k_YAaGFnZCGrTtzyR8ZUwex8epkyC-rrtY7nkZPL2EoFXv1Nt8mZIyNoL67X10YWOReNmQgUg7bGk34PgV6Q';
-const defaultPrivateKey = 'rRlt4TVJp4vRnl4XmnKIdfYwJ_qofzrG9lleFYmWiDM';
-
-const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || defaultPublicKey;
-const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || defaultPrivateKey;
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
 const vapidEmail = process.env.VAPID_EMAIL || 'mailto:contacto@medfamilia.app';
 
 let isPushConfigured = false;
 
-try {
-  webpush.setVapidDetails(vapidEmail, vapidPublicKey, vapidPrivateKey);
-  isPushConfigured = true;
-} catch (err) {
-  console.warn('⚠️ Error configurando VAPID keys para notificaciones Push:', err);
+if (vapidPublicKey && vapidPrivateKey) {
+  try {
+    webpush.setVapidDetails(vapidEmail, vapidPublicKey, vapidPrivateKey);
+    isPushConfigured = true;
+  } catch (err) {
+    console.warn('⚠️ Error configurando VAPID keys para notificaciones Push:', err);
+  }
+} else {
+  console.warn('⚠️ Notificaciones Push deshabilitadas: VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY no están definidas en las variables de entorno.');
 }
 
 export function getVapidPublicKey() {
@@ -38,10 +39,11 @@ export async function sendNotificationToFamily(familyId: string, payload: { titl
       );
     } catch (err: any) {
       if (err.statusCode === 410 || err.statusCode === 404) {
-        db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(sub.id);
+        db.prepare('DELETE FROM push_subscriptions WHERE id = ? AND family_id = ?').run(sub.id, familyId);
       } else {
-        console.error('Error enviando notificacion push:', err);
+        console.error('Error enviando notificación push:', err);
       }
     }
   }
 }
+

@@ -10,7 +10,6 @@ router.use(authMiddleware);
 router.get('/', (req: AuthRequest, res) => {
   try {
     const familyId = req.family!.id;
-    // SQLite / PostgreSQL compatible query depending on engine
     let numbers: any[] = [];
     try {
       numbers = db.prepare('SELECT * FROM family_whatsapp_numbers WHERE family_id = ? ORDER BY created_at ASC').all(familyId) as any[];
@@ -30,11 +29,15 @@ router.post('/', (req: AuthRequest, res) => {
     const familyId = req.family!.id;
     const { phone_number, label } = req.body;
 
-    if (!phone_number) {
+    if (!phone_number || typeof phone_number !== 'string' || !phone_number.trim()) {
       return res.status(400).json({ error: 'El número de teléfono celular es requerido.' });
     }
 
     const cleanPhone = phone_number.replace(/\D/g, '');
+    if (cleanPhone.length < 7 || cleanPhone.length > 15) {
+      return res.status(400).json({ error: 'El número de celular debe contener una cantidad válida de dígitos.' });
+    }
+
     const formattedPhone = cleanPhone.startsWith('57') ? cleanPhone : `57${cleanPhone}`;
 
     // Check count (Max 4 limit enforcement)
@@ -50,7 +53,7 @@ router.post('/', (req: AuthRequest, res) => {
     }
 
     const id = uuidv4();
-    const numLabel = label || `Celular ${existingCount + 1}`;
+    const numLabel = typeof label === 'string' && label.trim() ? label.trim() : `Celular ${existingCount + 1}`;
 
     db.prepare('INSERT INTO family_whatsapp_numbers (id, family_id, phone_number, label) VALUES (?, ?, ?, ?)').run([
       id,
@@ -75,7 +78,11 @@ router.delete('/:id', (req: AuthRequest, res) => {
     const familyId = req.family!.id;
     const { id } = req.params;
 
-    db.prepare('DELETE FROM family_whatsapp_numbers WHERE id = ? AND family_id = ?').run([id, familyId]);
+    const result = db.prepare('DELETE FROM family_whatsapp_numbers WHERE id = ? AND family_id = ?').run([id, familyId]);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Número de WhatsApp no encontrado o no pertenece a su familia.' });
+    }
+
     return res.json({ message: 'Número de WhatsApp eliminado correctamente.' });
   } catch (error) {
     console.error('Error eliminando número de WhatsApp:', error);
@@ -84,3 +91,4 @@ router.delete('/:id', (req: AuthRequest, res) => {
 });
 
 export default router;
+

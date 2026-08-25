@@ -11,11 +11,24 @@ router.post('/register', async (req, res) => {
   try {
     const { name, code, password } = req.body;
 
-    if (!name || !code || !password) {
-      return res.status(400).json({ error: 'Nombre de familia, código y contraseña son requeridos.' });
+    if (!name || typeof name !== 'string' || !code || typeof code !== 'string' || !password || typeof password !== 'string') {
+      return res.status(400).json({ error: 'Nombre de familia, código y contraseña son requeridos y deben ser textos válidos.' });
     }
 
+    const cleanName = name.trim();
     const cleanCode = code.toLowerCase().trim();
+
+    if (cleanName.length < 2) {
+      return res.status(400).json({ error: 'El nombre de la familia debe tener al menos 2 caracteres.' });
+    }
+
+    if (cleanCode.length < 3 || !/^[a-z0-9_-]+$/.test(cleanCode)) {
+      return res.status(400).json({ error: 'El código de familia debe tener al menos 3 caracteres alfanuméricos.' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
+    }
 
     // Check if code exists
     const existing = db.prepare('SELECT id FROM families WHERE code = ?').get(cleanCode);
@@ -29,7 +42,7 @@ router.post('/register', async (req, res) => {
     db.prepare('INSERT INTO families (id, code, name, password_hash) VALUES (?, ?, ?, ?)').run([
       familyId,
       cleanCode,
-      name,
+      cleanName,
       passwordHash
     ]);
 
@@ -43,12 +56,12 @@ router.post('/register', async (req, res) => {
       mamaId, familyId, 'Mamá', 'Madre', '#10b981'
     );
 
-    const token = generateToken({ id: familyId, code: cleanCode, name });
+    const token = generateToken({ id: familyId, code: cleanCode, name: cleanName });
 
     return res.json({
       message: 'Familia registrada con éxito.',
       token,
-      family: { id: familyId, code: cleanCode, name }
+      family: { id: familyId, code: cleanCode, name: cleanName }
     });
   } catch (error) {
     console.error('Error registrando familia:', error);
@@ -61,7 +74,7 @@ router.post('/login', async (req, res) => {
   try {
     const { code, password } = req.body;
 
-    if (!code || !password) {
+    if (!code || typeof code !== 'string' || !password || typeof password !== 'string') {
       return res.status(400).json({ error: 'Código de familia y contraseña requeridos.' });
     }
 
@@ -69,12 +82,12 @@ router.post('/login', async (req, res) => {
     const family = db.prepare('SELECT * FROM families WHERE code = ?').get(cleanCode) as any;
 
     if (!family) {
-      return res.status(401).json({ error: 'Código de familia no encontrado.' });
+      return res.status(401).json({ error: 'Código de familia o contraseña incorrectos.' });
     }
 
     const validPassword = await bcrypt.compare(password, family.password_hash);
     if (!validPassword) {
-      return res.status(401).json({ error: 'Contraseña incorrecta.' });
+      return res.status(401).json({ error: 'Código de familia o contraseña incorrectos.' });
     }
 
     const token = generateToken({ id: family.id, code: family.code, name: family.name });
@@ -95,3 +108,4 @@ router.get('/me', authMiddleware, (req: AuthRequest, res) => {
 });
 
 export default router;
+

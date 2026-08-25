@@ -36,11 +36,11 @@ function checkAndIncrementAiUsage(familyId: string): boolean {
  */
 router.get('/qr', async (req: Request, res: Response) => {
   try {
-    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
     const adminKey = req.query.key;
 
-    if (adminKey !== EVOLUTION_API_KEY) {
-      return res.status(401).send('<h2>🛑 Acceso No Autorizado</h2><p>Proporcione la clave secreta de administración en la URL: <code>?key=TU_CLAVE_ADMIN</code></p>');
+    if (!EVOLUTION_API_KEY || adminKey !== EVOLUTION_API_KEY) {
+      return res.status(401).send('<h2>🛑 Acceso No Autorizado</h2><p>Proporcione la clave secreta de administración configurada en la URL: <code>?key=TU_CLAVE_ADMIN</code></p>');
     }
 
     const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
@@ -104,7 +104,8 @@ router.get('/qr', async (req: Request, res: Response) => {
       </html>
     `);
   } catch (err: any) {
-    return res.status(500).send(`<h2>Error conectando con Evolution API:</h2><p>${err.message}</p>`);
+    console.error('Error conectando con Evolution API:', err);
+    return res.status(500).send('<h2>Error interno conectando con el servicio de WhatsApp.</h2>');
   }
 });
 
@@ -113,12 +114,12 @@ router.get('/qr', async (req: Request, res: Response) => {
  */
 router.get('/pairing-code', async (req: Request, res: Response) => {
   try {
-    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
     const adminKey = req.query.key;
     const phone = (req.query.number as string || '').replace(/\D/g, '');
 
-    if (adminKey !== EVOLUTION_API_KEY) {
-      return res.status(401).send('<h2>🛑 Acceso No Autorizado</h2><p>Proporcione la clave secreta en la URL: <code>?key=TU_CLAVE_ADMIN&number=57300...</code></p>');
+    if (!EVOLUTION_API_KEY || adminKey !== EVOLUTION_API_KEY) {
+      return res.status(401).send('<h2>🛑 Acceso No Autorizado</h2><p>Proporcione la clave secreta de administración configurada en la URL: <code>?key=TU_CLAVE_ADMIN&number=57300...</code></p>');
     }
 
     if (!phone) {
@@ -201,9 +202,10 @@ router.get('/pairing-code', async (req: Request, res: Response) => {
       `);
     }
 
-    return res.status(400).send(`<h2>No se pudo generar el código. ¿Ya está vinculado?</h2><p>${JSON.stringify(data)}</p>`);
+    return res.status(400).send(`<h2>No se pudo generar el código. ¿Ya está vinculado?</h2>`);
   } catch (err: any) {
-    return res.status(500).send(`<h2>Error generando código:</h2><p>${err.message}</p>`);
+    console.error('Error generando código de emparejamiento WhatsApp:', err);
+    return res.status(500).send(`<h2>Error generando el código de emparejamiento.</h2>`);
   }
 });
 
@@ -212,9 +214,17 @@ router.get('/pairing-code', async (req: Request, res: Response) => {
  */
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
+    // Validate Webhook Token Header
+    const token = (req.headers['x-webhook-token'] || req.headers['apikey'] || req.query.token) as string;
+    const expectedToken = process.env.WHATSAPP_WEBHOOK_SECRET || process.env.EVOLUTION_API_KEY;
+
+    if (expectedToken && token !== expectedToken) {
+      return res.status(401).json({ error: 'Acceso no autorizado al Webhook.' });
+    }
+
     const eventData = req.body;
 
-    if (eventData.event === 'messages.upsert') {
+    if (eventData?.event === 'messages.upsert') {
       const messageObj = eventData.data;
       const remoteJid = messageObj?.key?.remoteJid;
       const fromMe = messageObj?.key?.fromMe;
@@ -237,7 +247,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
         if (userText) {
           await sendWhatsAppMessage(
             senderPhone,
-            `👋 *¡Hola! MedFamilia le da la bienvenida.*\n\nEste número de WhatsApp (${formattedPhone}) no se encuentra registrado en ninguna cuenta activa de MedFamilia.\n\nPara agendar citas o analizar exámenes con IA por WhatsApp, agregue este celular en la sección de números autorizados en su cuenta web o regístrese en: https://tu-dominio.com`
+            `👋 *¡Hola! MedFamilia le da la bienvenida.*\n\nEste número de WhatsApp (${formattedPhone}) no se encuentra registrado en ninguna cuenta activa de MedFamilia.\n\nPara agendar citas o analizar exámenes con IA por WhatsApp, agregue este celular en la sección de números autorizados en su cuenta web.`
           );
         }
         return res.sendStatus(200);
@@ -252,7 +262,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
         if (textLower === 'hola' || textLower === 'ayuda' || textLower === 'menu') {
           await sendWhatsAppMessage(
             senderPhone,
-            `🩺 *¡Hola! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar de IA.\n\n*¿Qué puedes hacer por aquí?*\n1️⃣ Envíame una **foto o archivo PDF** de una orden médica y la agendaré automáticamente.\n2️⃣ Envíame una foto de un **resultado de examen de laboratorio** y te enviaré un resumen amigable.\n3️⃣ Escríbeme detalles de una cita (ej: *"Cita con el Cardiólogo mañana a las 8am"*).\n\nPara ingresar a la App Web: https://tu-dominio.com`
+            `🩺 *¡Hola! Bienvenido a MedFamilia*\n\nSoy tu asistente médico familiar de IA.\n\n*¿Qué puedes hacer por aquí?*\n1️⃣ Envíame una **foto o archivo PDF** de una orden médica y la agendaré automáticamente.\n2️⃣ Envíame una foto de un **resultado de examen de laboratorio** y te enviaré un resumen amigable.\n3️⃣ Escríbeme detalles de una cita (ej: *"Cita con el Cardiólogo mañana a las 8am"*).`
           );
         } else {
           // Check rate limit for AI processing
@@ -260,7 +270,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
           if (!allowed) {
             await sendWhatsAppMessage(
               senderPhone,
-              `⚠️ *Límite diario de IA alcanzado*\n\nHas alcanzado el límite máximo diario de ${MAX_DAILY_AI_REQUESTS} consultas por IA en WhatsApp para tu cuenta familiar hoy.\n\nPara registrar más citas o exámenes hoy, por favor ingresa directamente en nuestra App Web: https://tu-dominio.com`
+              `⚠️ *Límite diario de IA alcanzado*\n\nHas alcanzado el límite máximo diario de ${MAX_DAILY_AI_REQUESTS} consultas por IA en WhatsApp para tu cuenta familiar hoy.`
             );
             return res.sendStatus(200);
           }
@@ -286,3 +296,4 @@ router.post('/webhook', async (req: Request, res: Response) => {
 });
 
 export default router;
+

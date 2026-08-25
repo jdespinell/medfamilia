@@ -55,7 +55,8 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
     });
 
     const responseText = response.text || '';
-    const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    const cleanJson = jsonMatch ? jsonMatch[0] : responseText.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
   } catch (err: any) {
     console.error(`Error procesando Gemini con modelo [${model}]:`, err);
@@ -105,7 +106,8 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
     });
 
     const responseText = response.text || '';
-    const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    const cleanJson = jsonMatch ? jsonMatch[0] : responseText.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
   } catch (err: any) {
     console.error(`Error procesando archivo con Gemini [${model}]:`, err);

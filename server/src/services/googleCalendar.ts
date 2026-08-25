@@ -63,11 +63,9 @@ export async function syncAppointmentToGoogleCalendar(
     description: description,
     start: {
       dateTime: startTime.toISOString(),
-      timeZone: 'America/Bogota',
     },
     end: {
       dateTime: endTime.toISOString(),
-      timeZone: 'America/Bogota',
     },
     reminders: {
       useDefault: false,

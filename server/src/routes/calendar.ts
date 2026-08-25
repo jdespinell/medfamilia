@@ -11,14 +11,14 @@ export async function syncAllFamilyAppointments(familyId: string, refreshToken: 
     SELECT a.*, p.name as patient_name
     FROM appointments a
     JOIN patients p ON a.patient_id = p.id
-    WHERE a.family_id = ? AND a.status != ?
-  `).all([familyId, 'cancelada']) as any[];
+    WHERE a.family_id = ? AND p.family_id = ? AND a.status != ?
+  `).all([familyId, familyId, 'cancelada']) as any[];
 
   for (const app of appointments) {
     try {
       const eventId = await syncAppointmentToGoogleCalendar(refreshToken, app);
       if (eventId) {
-        db.prepare('UPDATE appointments SET google_event_id = ? WHERE id = ?').run([eventId, app.id]);
+        db.prepare('UPDATE appointments SET google_event_id = ? WHERE id = ? AND family_id = ?').run([eventId, app.id, familyId]);
       }
     } catch (err) {
       console.error(`Error sincronizando cita [${app.id}] con Google Calendar:`, err);
@@ -28,7 +28,14 @@ export async function syncAllFamilyAppointments(familyId: string, refreshToken: 
 
 // Get OAuth URL for a patient
 router.get('/auth-url/:patientId', authMiddleware, (req: AuthRequest, res) => {
+  const familyId = req.family!.id;
   const { patientId } = req.params;
+
+  // Verify patient ownership by familyId
+  const patient = db.prepare('SELECT id FROM patients WHERE id = ? AND family_id = ?').get(patientId, familyId);
+  if (!patient) {
+    return res.status(404).json({ error: 'Paciente no encontrado o no pertenece a su grupo familiar.' });
+  }
 
   const host = req.get('host');
   const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
@@ -38,7 +45,7 @@ router.get('/auth-url/:patientId', authMiddleware, (req: AuthRequest, res) => {
 
   if (!url) {
     return res.status(400).json({
-      error: 'Google OAuth no está configurado. Configure GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en el .env.',
+      error: 'Google OAuth no está configurado. Configure GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en las variables de entorno.',
     });
   }
 
@@ -63,10 +70,15 @@ router.post('/sync-patient/:patientId', authMiddleware, async (req: AuthRequest,
 // OAuth Callback handler
 router.get('/callback', async (req, res) => {
   const { code, state } = req.query; // state is patientId
-  const patientId = state as string;
+  const patientId = typeof state === 'string' ? state : '';
 
-  if (!code || !patientId) {
+  if (!code || typeof code !== 'string' || !patientId) {
     return res.status(400).send('Respuesta de autenticación de Google inválida.');
+  }
+
+  const patient = db.prepare('SELECT family_id FROM patients WHERE id = ?').get(patientId) as any;
+  if (!patient) {
+    return res.status(404).send('Paciente no encontrado en el sistema.');
   }
 
   const host = req.get('host');
@@ -75,30 +87,28 @@ router.get('/callback', async (req, res) => {
 
   const oauth2Client = getOAuth2Client(dynamicRedirectUri);
   if (!oauth2Client) {
-    return res.status(500).send('Google OAuth no configurado en el servidor.');
+    return res.status(500).send('Google OAuth no está configurado en el servidor.');
   }
 
   try {
-    const { tokens } = await oauth2Client.getToken(code as string);
+    const { tokens } = await oauth2Client.getToken(code);
 
     if (tokens.refresh_token) {
-      db.prepare('UPDATE patients SET google_refresh_token = ? WHERE id = ?').run([
+      db.prepare('UPDATE patients SET google_refresh_token = ? WHERE id = ? AND family_id = ?').run([
         tokens.refresh_token,
-        patientId
+        patientId,
+        patient.family_id
       ]);
 
-      const patient = db.prepare('SELECT family_id FROM patients WHERE id = ?').get(patientId) as any;
-      if (patient) {
-        // Sync ALL family appointments to this connected Google Calendar!
-        syncAllFamilyAppointments(patient.family_id, tokens.refresh_token);
-      }
+      // Sync ALL family appointments to this connected Google Calendar
+      await syncAllFamilyAppointments(patient.family_id, tokens.refresh_token);
     }
 
     return res.send(`
       <html>
         <body style="font-family: sans-serif; text-align: center; padding: 40px;">
           <h2 style="color: #10b981;">✅ Google Calendar vinculado correctamente</h2>
-          <p>Todas las citas familiares de tus papás se están sincronizando con Google Calendar.</p>
+          <p>Todas las citas familiares se están sincronizando con Google Calendar.</p>
           <script>
             setTimeout(() => {
               if (window.opener) { window.close(); } else { window.location.href = '/'; }
@@ -114,3 +124,4 @@ router.get('/callback', async (req, res) => {
 });
 
 export default router;
+

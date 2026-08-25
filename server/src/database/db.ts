@@ -40,7 +40,29 @@ export function initDatabase() {
       code TEXT UNIQUE NOT NULL,
       name TEXT NOT NULL,
       password_hash TEXT NOT NULL,
+      phone_number TEXT UNIQUE,
+      subscription_status TEXT NOT NULL DEFAULT 'trial',
+      subscription_expires_at TEXT,
+      payment_receipt_url TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS family_whatsapp_numbers (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      phone_number TEXT UNIQUE NOT NULL,
+      label TEXT NOT NULL DEFAULT 'Principal',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS whatsapp_ai_usage (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      request_date TEXT NOT NULL,
+      request_count INTEGER NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS patients (
@@ -60,15 +82,15 @@ export function initDatabase() {
       family_id TEXT NOT NULL,
       patient_id TEXT NOT NULL,
       title TEXT NOT NULL,
-      appointment_type TEXT NOT NULL DEFAULT 'consulta', -- 'consulta', 'examen', 'laboratorio', 'procedimiento'
+      appointment_type TEXT NOT NULL DEFAULT 'consulta',
       specialist TEXT,
       specialty TEXT,
       location TEXT,
-      date_time TEXT NOT NULL, -- ISOString
-      requires_fasting INTEGER DEFAULT 0, -- 0 or 1
+      date_time TEXT NOT NULL,
+      requires_fasting INTEGER DEFAULT 0,
       prep_instructions TEXT,
       photo_url TEXT,
-      status TEXT NOT NULL DEFAULT 'pendiente', -- 'pendiente', 'completada', 'cancelada'
+      status TEXT NOT NULL DEFAULT 'pendiente',
       google_event_id TEXT,
       doctor_notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -83,7 +105,7 @@ export function initDatabase() {
       appointment_id TEXT,
       title TEXT NOT NULL,
       file_url TEXT NOT NULL,
-      file_type TEXT NOT NULL, -- 'pdf', 'image'
+      file_type TEXT NOT NULL,
       summary_ai TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE,
@@ -102,18 +124,18 @@ export function initDatabase() {
 
     CREATE TABLE IF NOT EXISTS specialties (
       id TEXT PRIMARY KEY,
-      family_id TEXT, -- NULL for system defaults
+      family_id TEXT,
       name TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
-  // Safe migration for existing installations
-  try {
-    db.exec('ALTER TABLE appointments ADD COLUMN doctor_notes TEXT;');
-  } catch (e) {
-    // Column already exists
-  }
+  // Safe migrations for existing SQLite installations
+  try { db.exec('ALTER TABLE appointments ADD COLUMN doctor_notes TEXT;'); } catch (e) {}
+  try { db.exec('ALTER TABLE families ADD COLUMN phone_number TEXT;'); } catch (e) {}
+  try { db.exec('ALTER TABLE families ADD COLUMN subscription_status TEXT DEFAULT "trial";'); } catch (e) {}
+  try { db.exec('ALTER TABLE families ADD COLUMN subscription_expires_at TEXT;'); } catch (e) {}
+  try { db.exec('ALTER TABLE families ADD COLUMN payment_receipt_url TEXT;'); } catch (e) {}
 
   // Populate default system specialties if empty
   const count = (db.prepare('SELECT COUNT(*) as cnt FROM specialties WHERE family_id IS NULL').get() as any)?.cnt;
