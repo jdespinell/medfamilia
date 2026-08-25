@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import { sendWhatsAppMessage, ensureWhatsAppWebhook } from '../services/whatsapp.js';
 import { extractAppointmentFromText } from '../services/gemini.js';
+import { syncAppointmentToGoogleCalendar } from '../services/googleCalendar.js';
 import db from '../database/db.js';
 
 const router = Router();
@@ -18,6 +20,24 @@ router.use((req, res, next) => {
 });
 
 const MAX_DAILY_AI_REQUESTS = 15; // Maximum AI processing requests per family per day via WhatsApp
+
+interface PendingAppointmentDraft {
+  familyId: string;
+  patientId: string;
+  patientName: string;
+  extracted: {
+    title: string;
+    specialty?: string;
+    specialist?: string;
+    location?: string;
+    date_time: string;
+    requires_fasting?: boolean;
+    prep_instructions?: string;
+  };
+  timestamp: number;
+}
+
+const pendingAppointmentDrafts = new Map<string, PendingAppointmentDraft>();
 
 function checkAndIncrementAiUsage(familyId: string): boolean {
   try {
@@ -425,7 +445,89 @@ router.post('/webhook', async (req: Request, res: Response) => {
       if (userText) {
         const textLower = userText.toLowerCase().trim();
 
-        // A) MENU DE OPCIONES (0 TOKENS IA)
+        // A) VERIFICACIÓN DE CONFIRMACIÓN PENDIENTE (0 TOKENS IA)
+        const pendingDraft = pendingAppointmentDrafts.get(formattedPhone);
+        if (pendingDraft && (Date.now() - pendingDraft.timestamp < 15 * 60 * 1000)) {
+          const isConfirm = ['1', 'si', 'sí', 'confirmar', 'ok', 'agendar', 'guardar'].includes(textLower);
+          const isCancel = ['2', 'no', 'cancelar', 'descartar'].includes(textLower);
+
+          if (isConfirm) {
+            console.log(`[${getLocalTimestamp()}] 🟢 [Confirmación Recibida] Usuario +${formattedPhone} confirmó la cita.`);
+            const { extracted, patientId, patientName } = pendingDraft;
+            const newAppointmentId = uuidv4();
+            const dateVal = extracted.date_time || new Date().toISOString();
+
+            db.prepare(`
+              INSERT INTO appointments (
+                id, family_id, patient_id, title, appointment_type, specialist, specialty, location, date_time, requires_fasting, prep_instructions, status
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run([
+              newAppointmentId,
+              familyId,
+              patientId,
+              extracted.title,
+              'consulta',
+              extracted.specialist || null,
+              extracted.specialty || 'General',
+              extracted.location || null,
+              dateVal,
+              extracted.requires_fasting ? 1 : 0,
+              extracted.prep_instructions || null,
+              'pendiente'
+            ]);
+
+            // Sync with Google Calendar if patient is connected
+            const patientObj = db.prepare('SELECT google_refresh_token FROM patients WHERE id = ?').get(patientId) as any;
+            if (patientObj?.google_refresh_token) {
+              try {
+                const eventId = await syncAppointmentToGoogleCalendar(patientObj.google_refresh_token, {
+                  id: newAppointmentId,
+                  title: extracted.title,
+                  date_time: dateVal,
+                  specialist: extracted.specialist,
+                  location: extracted.location,
+                  patient_name: patientName,
+                  requires_fasting: extracted.requires_fasting,
+                  prep_instructions: extracted.prep_instructions
+                });
+                if (eventId) {
+                  db.prepare('UPDATE appointments SET google_event_id = ? WHERE id = ?').run(eventId, newAppointmentId);
+                }
+              } catch (gErr) {
+                console.error('Error sincronizando cita con Google Calendar:', gErr);
+              }
+            }
+
+            pendingAppointmentDrafts.delete(formattedPhone);
+
+            const dateFormatted = new Date(dateVal).toLocaleString('es-ES', {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+
+            await sendWhatsAppMessage(
+              formattedPhone,
+              `🎉 *¡Cita Guardada y Agendada con Éxito!* 🩺\n\n📌 *Título:* ${extracted.title} (${patientName})\n📅 *Fecha y Hora:* ${dateFormatted}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n\n✅ *Sincronizada en MedFamilia y Google Calendar.*`
+            );
+            return res.sendStatus(200);
+          }
+
+          if (isCancel) {
+            console.log(`[${getLocalTimestamp()}] 🔴 [Cancelación Recibida] Usuario +${formattedPhone} descartó la cita.`);
+            pendingAppointmentDrafts.delete(formattedPhone);
+
+            await sendWhatsAppMessage(
+              formattedPhone,
+              `❌ *Agendamiento Cancelado*\n\nNo se guardó ningún registro en MedFamilia. Si deseas agendar otra cita, envíame los datos nuevamente.`
+            );
+            return res.sendStatus(200);
+          }
+        }
+
+        // B) MENU DE OPCIONES (0 TOKENS IA)
         if (textLower === 'hola' || textLower === 'ayuda' || textLower === 'menu' || textLower === 'opciones') {
           console.log(`[${getLocalTimestamp()}] ⚡ [Flujo: Menú Interactivo] 0 Tokens IA usados. Enviando menú estático a +${formattedPhone}`);
           const sent = await sendWhatsAppMessage(
@@ -438,7 +540,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
           return res.sendStatus(200);
         }
 
-        // B) CONSULTAR PRÓXIMAS CITAS (0 TOKENS IA)
+        // C) CONSULTAR PRÓXIMAS CITAS (0 TOKENS IA)
         const isListRequest = 
           textLower === '4' ||
           textLower.includes('ver mis') ||
@@ -493,7 +595,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
           return res.sendStatus(200);
         }
 
-        // C) GEMINI IA TOKENS: Solo si el usuario envía texto descriptivo complejo para crear/agendar cita médica
+        // D) GEMINI IA TOKENS: Extracción de Cita por IA + Solicitud de Confirmación
         const allowed = checkAndIncrementAiUsage(familyId);
         if (!allowed) {
           console.log(`[${getLocalTimestamp()}] ⚠️ [Límite Diario] Familia ${familyName} alcanzó la cuota de 15 peticiones de IA por hoy.`);
@@ -509,12 +611,37 @@ router.post('/webhook', async (req: Request, res: Response) => {
           const extracted = await extractAppointmentFromText(userText);
           console.log(`[${getLocalTimestamp()}] ✨ [IA Éxito] Título: "${extracted.title}" | Fecha: "${extracted.date_time}" | Especialidad: "${extracted.specialty}"`);
 
-          const sent = await sendWhatsAppMessage(
-            formattedPhone,
-            `✅ *Cita Identificada con Éxito*\n\n📌 *Título:* ${extracted.title}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha:* ${extracted.date_time || 'Por confirmar'}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n\n*MedFamilia*`
-          );
+          // Find default family patient (Papá/Mamá/First patient)
+          const familyPatients = db.prepare('SELECT id, name FROM patients WHERE family_id = ? ORDER BY created_at ASC').all(familyId) as any[];
+          const patientId = familyPatients[0]?.id || uuidv4();
+          const patientName = familyPatients[0]?.name || 'Familiar';
+
+          // Save draft in pendingConfirmations
+          pendingAppointmentDrafts.set(formattedPhone, {
+            familyId,
+            patientId,
+            patientName,
+            extracted: {
+              ...extracted,
+              date_time: extracted.date_time || new Date().toISOString()
+            },
+            timestamp: Date.now()
+          });
+
+          const dateVal = extracted.date_time || new Date().toISOString();
+          const dateFormatted = new Date(dateVal).toLocaleString('es-ES', {
+            weekday: 'short',
+            day: 'numeric',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+
+          const confirmationMsg = `📋 *CONFIRMACIÓN DE CITA MÉDICA*\n\nIdentifiqué los siguientes datos:\n\n📌 *Cita:* ${extracted.title}\n👤 *Paciente:* ${patientName}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha y Hora:* ${dateFormatted}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n⚠️ *Ayuno:* ${extracted.requires_fasting ? 'Sí (Requiere Ayuno)' : 'No'}\n\n------------------------------------\n👇 *¿Deseas confirmar y guardar esta cita?*\n1️⃣ Escribe *1* o *SI* para Confirmar y Agendar\n2️⃣ Escribe *2* o *CANCELAR* para Descartar`;
+
+          const sent = await sendWhatsAppMessage(formattedPhone, confirmationMsg);
           if (sent) {
-            console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Confirmación de cita por IA enviada por WhatsApp a +${formattedPhone}`);
+            console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Enviada] Borrador de cita enviado a +${formattedPhone} esperando confirmación.`);
           }
         } catch (aiErr: any) {
           console.error(`[${getLocalTimestamp()}] ❌ [Error IA] Fallo procesando texto con Gemini:`, aiErr?.message || aiErr);
