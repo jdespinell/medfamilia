@@ -697,6 +697,14 @@ async function processBatchedMessages(phone: string) {
       ORDER BY a.date_time ASC LIMIT 10
     `).all(familyId) as any[];
 
+    const pendingOrders = db.prepare(`
+      SELECT mo.id, mo.title, mo.order_type, mo.description, p.name as patient_name
+      FROM medical_orders mo
+      JOIN patients p ON mo.patient_id = p.id
+      WHERE mo.family_id = ? AND mo.status = 'pendiente'
+      ORDER BY mo.created_at DESC LIMIT 10
+    `).all(familyId) as any[];
+
     const recentExams = db.prepare(`
       SELECT e.id, e.title, e.summary_ai, e.file_url, e.file_type, e.created_at, p.name as patient_name
       FROM exam_results e
@@ -709,15 +717,16 @@ async function processBatchedMessages(phone: string) {
       familyName,
       patients,
       upcomingAppointments,
+      pendingOrders,
       recentExams
     }, mediaAttachments);
 
     // Auto-adjust intent if media attachments are present but intent came back as general_answer
     if (mediaAttachments.length > 0 && (aiResult.intent === 'general_answer' || !aiResult.intent)) {
-      console.log(`[${getLocalTimestamp()}] 🔄 [Ajuste Intent] Se recibieron ${mediaAttachments.length} archivo(s), ajustando intent a 'upload_exam_result'`);
-      aiResult.intent = 'upload_exam_result';
-      if (!aiResult.examData) {
-        aiResult.examData = { title: 'Resultado de Examen' };
+      console.log(`[${getLocalTimestamp()}] 🔄 [Ajuste Intent] Se recibieron ${mediaAttachments.length} archivo(s), ajustando intent a 'upload_order'`);
+      aiResult.intent = 'upload_order';
+      if (!aiResult.orderData) {
+        aiResult.orderData = { title: 'Orden Médica / Examen', order_type: 'examen' };
       }
     }
 
@@ -754,9 +763,9 @@ async function processBatchedMessages(phone: string) {
       await sendWhatsAppMessage(formattedPhone, confirmationMsg);
       console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Enviada] Borrador de cita enviado a +${formattedPhone}`);
     } 
-    // 2. INTENT: UPLOAD ORDER
+    // 2. INTENT: UPLOAD ORDER (Guarda en medical_orders con estado 'pendiente')
     else if (aiResult.intent === 'upload_order' && aiResult.orderData) {
-      console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Orden] Título: "${aiResult.orderData.title}"`);
+      console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Orden Médica] Título: "${aiResult.orderData.title}"`);
       const patientId = aiResult.patientId || patients[0]?.id || uuidv4();
       
       let savedCount = 0;
@@ -766,24 +775,46 @@ async function processBatchedMessages(phone: string) {
 
         for (let i = 0; i < mediaAttachments.length; i++) {
           const attach = mediaAttachments[i];
+          const fileType = attach.mimeType.includes('pdf') ? 'pdf' : 'image';
           const ext = attach.mimeType.includes('pdf') ? 'pdf' : 'jpg';
           const filename = `order_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
           fs.writeFileSync(path.join(uploadsDir, filename), Buffer.from(attach.base64, 'base64'));
-          const photoUrl = `/uploads/${filename}`;
+          const fileUrl = `/api/uploads/${filename}`;
           const title = mediaAttachments.length > 1 ? `${aiResult.orderData.title} (#${i + 1})` : aiResult.orderData.title;
 
           db.prepare(`
-            INSERT INTO appointments (
-              id, family_id, patient_id, title, appointment_type, specialty, photo_url, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO medical_orders (
+              id, family_id, patient_id, order_type, title, description, file_url, file_type, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')
           `).run([
-            uuidv4(), familyId, patientId, title, aiResult.orderData.order_type || 'consulta', aiResult.orderData.specialty || 'General', photoUrl, 'pendiente'
+            uuidv4(),
+            familyId,
+            patientId,
+            aiResult.orderData.order_type || 'examen',
+            title,
+            aiResult.orderData.description || null,
+            fileUrl,
+            fileType
           ]);
           savedCount++;
         }
+      } else {
+        db.prepare(`
+          INSERT INTO medical_orders (
+            id, family_id, patient_id, order_type, title, description, status
+          ) VALUES (?, ?, ?, ?, ?, ?, 'pendiente')
+        `).run([
+          uuidv4(),
+          familyId,
+          patientId,
+          aiResult.orderData.order_type || 'examen',
+          aiResult.orderData.title,
+          aiResult.orderData.description || null
+        ]);
+        savedCount++;
       }
 
-      const answer = aiResult.answerText || `✅ He registrado ${savedCount > 1 ? `${savedCount} órdenes médicas` : 'la orden médica'} para ${aiResult.patientName || 'tu familiar'}.`;
+      const answer = aiResult.answerText || `✅ He registrado ${savedCount > 1 ? `${savedCount} órdenes médicas` : 'la orden médica'} en MedFamilia como *Pendientes de Agendar*.`;
       await sendWhatsAppMessage(formattedPhone, answer);
     }
     // 3. INTENT: UPLOAD EXAM RESULT
