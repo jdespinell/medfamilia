@@ -137,14 +137,21 @@ export async function extractMedicalOrdersFromFile(filePath: string, mimeType: s
 
   const prompt = `
 Analiza la siguiente foto o documento de orden médica, remisión, volante de examen o prescripción.
-Identifica TODAS las órdenes médicas, exámenes de laboratorio, ecografías, radiografías, procedimientos o remisiones a médicos especialistas indicados en el documento.
+
+REGLA CLAVE PARA ÓRDENES DE LABORATORIO:
+1. Si la imagen/documento es un formato u hoja de solicitud de laboratorio que lista múltiples pruebas de sangre/orina (ej: Hemograma, Colesterol, Bilirrubinas, TSH, Creatinina, Hepatitis, etc.), TRÁTALO COMO 1 SOLA ÓRDEN MÉDICA DE LABORATORIO PRINCIPAL.
+   - "title": Título corto como "Orden de Laboratorio Clínico" (o agregando la entidad si la hay, ej: "Orden de Laboratorio Clínico - Gut Médica").
+   - "order_type": "laboratorio".
+   - "description": Lista las pruebas solicitadas de forma resumida (ej: Albúmina, Bilirrubinas, Colesterol, Creatinina, Hemograma, TSH, Hepatitis A/B/C, etc.) e indicaciones previas (ej. Ir en ayunas de 8-12 horas).
+
+2. Únicamente si el documento contiene solicitudes para procedimientos completamente independientes en entidades/citas distintas (ej. una orden de ecografía Y APARTE una remisión a cardiología), puedes devolver más de 1 objeto en el arreglo. Pero una sola hoja de solicitud de laboratorio con 20 pruebas de sangre NUNCA debe dividirse en 20 órdenes separadas, pues se efectúa en una sola toma de muestra de sangre.
 
 Devuelve EXCLUSIVAMENTE un arreglo JSON válido de objetos con la siguiente estructura (sin bloques markdown ni texto adicional):
 [
   {
-    "title": "Título corto y claro de la orden o examen (ej: Ecografía Abdominal Total, Remisión a Cardiología, Hemograma Completo)",
+    "title": "Título corto de la orden médica agrupada",
     "order_type": "examen" | "especialista" | "laboratorio" | "procedimiento",
-    "description": "Indicaciones previas, preparación o detalles visibles si los hay (ej: Ir en ayunas de 8 horas, tomar 4 vasos de agua, llevar exámenes anteriores)"
+    "description": "Lista de exámenes/pruebas contenidas e indicaciones de preparación"
   }
 ]
 `;
@@ -166,8 +173,24 @@ Devuelve EXCLUSIVAMENTE un arreglo JSON válido de objetos con la siguiente estr
     const responseText = response.text || '';
     const jsonMatch = responseText.match(/\[[\s\S]*\]/);
     const cleanJson = jsonMatch ? jsonMatch[0] : responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleanJson);
-    return Array.isArray(parsed) ? parsed : [parsed];
+    let parsed = JSON.parse(cleanJson);
+    if (!Array.isArray(parsed)) parsed = [parsed];
+
+    // Merge multiple lab order items from a single document into 1 grouped lab order
+    const labOrders = parsed.filter((o: any) => o.order_type === 'laboratorio');
+    const nonLabOrders = parsed.filter((o: any) => o.order_type !== 'laboratorio');
+
+    if (labOrders.length > 1) {
+      const firstLab = labOrders[0];
+      const mergedTitle = firstLab.title && firstLab.title.toLowerCase().includes('laboratorio')
+        ? firstLab.title
+        : 'Orden de Laboratorio Clínico';
+      const testsList = labOrders.map((o: any) => o.title).join(', ');
+      const mergedDesc = `Pruebas incluidas: ${testsList}.${firstLab.description ? ' ' + firstLab.description : ''}`;
+      return [{ title: mergedTitle, order_type: 'laboratorio', description: mergedDesc }, ...nonLabOrders];
+    }
+
+    return parsed;
   } catch (err: any) {
     console.error(`Error extrayendo órdenes médicas con Gemini [${model}]:`, err);
     return [];
@@ -268,6 +291,7 @@ INSTRUCCIONES:
    - Devuelve JSON con intent = "appointment" y los datos extraídos en "appointmentData".
 
 2. Si hay imágenes o documentos adjuntos y corresponden a una ORDEN MÉDICA o REMISIÓN para pedir citas/exámenes:
+   - REGLA DE ORO: Si la orden es una hoja de solicitud de laboratorio con múltiples pruebas de sangre/orina (ej. Hemograma, Colesterol, TSH, Creatinina, etc.), trátala como 1 SOLA ÓRDEN MÉDICA AGRUPADA (ej: "Orden de Laboratorio Clínico - Gut Médica") y resume las pruebas en "description" y "answerText". NUNCA la dividas en múltiples órdenes individuales por cada prueba.
    - Devuelve intent = "upload_order", identifica al paciente, extrae los datos de la orden en "orderData" y redacta "answerText".
 
 3. Si hay imágenes o documentos adjuntos y corresponden a un RESULTADO DE EXAMEN MÉDICO:
@@ -302,8 +326,8 @@ Si es para registrar una orden médica (foto de orden/remisión):
   "patientName": "Nombre del paciente",
   "orderData": {
     "order_type": "examen" | "especialista" | "laboratorio" | "procedimiento",
-    "title": "Título descriptivo de la orden",
-    "description": "Descripción/instrucciones",
+    "title": "Título descriptivo de la orden (ej: Orden de Laboratorio Clínico)",
+    "description": "Lista de las pruebas solicitadas (ej: Albúmina, Hemograma, Colesterol, TSH, etc.)",
     "specialty": "Especialidad médica"
   },
   "answerText": "Respuesta amigable describiendo lo que se identificó"
