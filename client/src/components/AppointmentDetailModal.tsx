@@ -17,10 +17,13 @@ import {
   Save,
   Plus,
   Camera,
-  Image as ImageIcon
+  Image as ImageIcon,
+  ClipboardList,
+  Trash2,
+  Link
 } from 'lucide-react';
 import { apiRequest, getFileUrl } from '../api';
-import { Appointment, ExamResult } from '../types';
+import { Appointment, ExamResult, MedicalOrder } from '../types';
 
 interface AppointmentDetailModalProps {
   appointment: Appointment;
@@ -39,10 +42,24 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSuccess, setNotesSuccess] = useState(false);
 
-  // File Input Refs
+  // File Input Refs for Results
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
+
+  // File Input Refs for Orders
+  const orderCameraInputRef = useRef<HTMLInputElement>(null);
+  const orderGalleryInputRef = useRef<HTMLInputElement>(null);
+  const orderPdfInputRef = useRef<HTMLInputElement>(null);
+
+  // Medical Orders State
+  const [medicalOrders, setMedicalOrders] = useState<MedicalOrder[]>(appointment.medical_orders || []);
+  const [showAddOrder, setShowAddOrder] = useState(false);
+  const [orderTitle, setOrderTitle] = useState('');
+  const [orderType, setOrderType] = useState<MedicalOrder['order_type']>('examen');
+  const [orderDescription, setOrderDescription] = useState('');
+  const [orderFile, setOrderFile] = useState<File | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
 
   // Upload results modal state inside detail view
   const [showUploadResult, setShowUploadResult] = useState(false);
@@ -109,6 +126,56 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
     }
   };
 
+  const handleOrderFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setOrderFile(e.target.files[0]);
+    }
+  };
+
+  const handleAddOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orderTitle) return;
+
+    setSavingOrder(true);
+    try {
+      const formData = new FormData();
+      if (orderFile) formData.append('file', orderFile);
+      formData.append('appointment_id', appointment.id);
+      formData.append('patient_id', appointment.patient_id);
+      formData.append('title', orderTitle);
+      formData.append('order_type', orderType);
+      if (orderDescription) formData.append('description', orderDescription);
+
+      const res = await apiRequest('/medical-orders', {
+        method: 'POST',
+        body: formData,
+      });
+
+      setMedicalOrders([res, ...medicalOrders]);
+      setShowAddOrder(false);
+      setOrderTitle('');
+      setOrderDescription('');
+      setOrderFile(null);
+      setOrderType('examen');
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Error guardando orden médica.');
+    } finally {
+      setSavingOrder(false);
+    }
+  };
+
+  const handleDeleteOrder = async (orderId: string) => {
+    if (!window.confirm('¿Estás seguro de que quieres eliminar esta orden médica?')) return;
+    try {
+      await apiRequest(`/medical-orders/${orderId}`, { method: 'DELETE' });
+      setMedicalOrders(medicalOrders.filter(o => o.id !== orderId));
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Error eliminando orden médica.');
+    }
+  };
+
   const dateObj = new Date(appointment.date_time);
   const isFasting = Boolean(appointment.requires_fasting);
 
@@ -151,6 +218,15 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
 
         {/* Content Body */}
         <div className="p-6 overflow-y-auto space-y-6">
+          {appointment.origin_order && (
+            <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center gap-2 shadow-sm">
+              <ClipboardList className="w-5 h-5 text-indigo-600 shrink-0" />
+              <span className="text-sm font-bold text-indigo-900">
+                Originada por orden de: {appointment.origin_order.source_appointment_title || 'Cita anterior'}
+              </span>
+            </div>
+          )}
+
           {/* Main Title & Schedule Banner */}
           <div className="space-y-3">
             <h2 className="text-2xl font-black text-slate-900 leading-tight">{appointment.title}</h2>
@@ -237,6 +313,197 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
               </a>
             </div>
           )}
+
+          <hr className="border-slate-200" />
+
+          {/* SECTION: ÓRDENES MÉDICAS */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                <ClipboardList className="w-5 h-5 text-indigo-600" />
+                <span>Órdenes Médicas ({medicalOrders.length})</span>
+              </h3>
+              <button
+                onClick={() => setShowAddOrder(!showAddOrder)}
+                className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center gap-1.5 transition border border-indigo-200"
+              >
+                <Plus className="w-4 h-4 text-indigo-600" />
+                <span>Adjuntar Orden Médica</span>
+              </button>
+            </div>
+
+            {/* Inline Form to Upload New Order */}
+            {showAddOrder && (
+              <form onSubmit={handleAddOrder} className="p-4 rounded-2xl bg-indigo-50/70 border-2 border-indigo-200 space-y-3 animate-in fade-in">
+                <h4 className="text-sm font-bold text-indigo-900">Agregar Nueva Orden</h4>
+
+                <input
+                  type="text"
+                  required
+                  placeholder="Título de la orden (ej. Ecografía Abdominal)"
+                  value={orderTitle}
+                  onChange={(e) => setOrderTitle(e.target.value)}
+                  className="w-full p-3 text-sm rounded-xl border border-indigo-200 bg-white font-semibold"
+                />
+
+                <select
+                  value={orderType}
+                  onChange={(e) => setOrderType(e.target.value as any)}
+                  className="w-full p-3 text-sm rounded-xl border border-indigo-200 bg-white font-semibold"
+                >
+                  <option value="examen">🔬 Examen</option>
+                  <option value="especialista">👨‍⚕️ Especialista</option>
+                  <option value="laboratorio">🔬 Laboratorio</option>
+                  <option value="procedimiento">🏥 Procedimiento</option>
+                </select>
+
+                <textarea
+                  rows={2}
+                  placeholder="Descripción o indicaciones (opcional)"
+                  value={orderDescription}
+                  onChange={(e) => setOrderDescription(e.target.value)}
+                  className="w-full p-3 text-sm rounded-xl border border-indigo-200 bg-white font-medium"
+                />
+
+                {orderFile ? (
+                  <div className="p-3 bg-white border border-indigo-300 rounded-xl flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800">{orderFile.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setOrderFile(null)}
+                      className="text-xs text-red-600 font-bold hover:underline"
+                    >
+                      Cambiar
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => orderCameraInputRef.current?.click()}
+                      className="p-3 rounded-xl bg-white border border-indigo-200 text-indigo-900 flex flex-col items-center gap-1 transition active:scale-95"
+                    >
+                      <Camera className="w-5 h-5 text-indigo-600" />
+                      <span className="font-bold text-xs">Cámara</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => orderGalleryInputRef.current?.click()}
+                      className="p-3 rounded-xl bg-white border border-indigo-200 text-indigo-900 flex flex-col items-center gap-1 transition active:scale-95"
+                    >
+                      <ImageIcon className="w-5 h-5 text-indigo-600" />
+                      <span className="font-bold text-xs">Galería</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => orderPdfInputRef.current?.click()}
+                      className="p-3 rounded-xl bg-white border border-indigo-200 text-indigo-900 flex flex-col items-center gap-1 transition active:scale-95"
+                    >
+                      <FileText className="w-5 h-5 text-indigo-600" />
+                      <span className="font-bold text-xs">PDF</span>
+                    </button>
+                  </div>
+                )}
+
+                <input
+                  ref={orderCameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleOrderFileSelect}
+                  className="hidden"
+                />
+                <input
+                  ref={orderGalleryInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleOrderFileSelect}
+                  className="hidden"
+                />
+                <input
+                  ref={orderPdfInputRef}
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  onChange={handleOrderFileSelect}
+                  className="hidden"
+                />
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddOrder(false)}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-200 text-slate-700"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingOrder}
+                    className="px-4 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition disabled:opacity-50"
+                  >
+                    {savingOrder ? 'Guardando...' : 'Guardar Orden'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* List of Attached Orders */}
+            {medicalOrders.length === 0 ? (
+              <p className="text-xs font-medium text-slate-400 italic">No se han adjuntado órdenes médicas.</p>
+            ) : (
+              medicalOrders.map((o) => {
+                let icon = '🔬';
+                if (o.order_type === 'especialista') icon = '👨‍⚕️';
+                if (o.order_type === 'procedimiento') icon = '🏥';
+
+                let statusBadge = null;
+                if (o.status === 'pendiente') statusBadge = <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-md text-xs font-bold">⏳ Pendiente</span>;
+                if (o.status === 'agendada') statusBadge = <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-md text-xs font-bold">📅 Agendada</span>;
+                if (o.status === 'completada') statusBadge = <span className="px-2 py-0.5 bg-green-100 text-green-800 rounded-md text-xs font-bold">✅ Completada</span>;
+
+                return (
+                  <div key={o.id} className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2">
+                        <span className="text-xl">{icon}</span>
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-900">{o.title}</h4>
+                          {o.description && <p className="text-xs text-slate-500 mt-0.5">{o.description}</p>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {statusBadge}
+                        <button onClick={() => handleDeleteOrder(o.id)} className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {o.linked_appointment_id && (
+                      <div className="px-3 py-2 bg-slate-50 rounded-xl flex items-center gap-2 text-xs font-medium text-slate-600 border border-slate-100">
+                        <Link className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Cita agendada: {o.linked_appointment?.title || 'Ver cita'}</span>
+                      </div>
+                    )}
+
+                    {o.file_url && (
+                      <div className="flex justify-start">
+                        <a
+                          href={getFileUrl(o.file_url)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1.5"
+                        >
+                          <FileDown className="w-3.5 h-3.5" />
+                          <span>Ver Archivo</span>
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
 
           <hr className="border-slate-200" />
 

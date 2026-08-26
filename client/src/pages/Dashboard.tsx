@@ -188,6 +188,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
     const dateObj = new Date(a.date_time);
     const isFasting = Boolean(a.requires_fasting);
     const attachedCount = a.attached_results?.length || 0;
+    const pendingOrdersCount = a.medical_orders ? a.medical_orders.filter(o => o.status === 'pendiente').length : 0;
 
     return (
       <div
@@ -293,6 +294,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
 
         {/* Attached Results / Notes Summary Badge */}
         <div className="ml-2 flex flex-wrap items-center gap-2 pt-1">
+          {pendingOrdersCount > 0 && (
+            <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-medium">
+              📋 {pendingOrdersCount} {pendingOrdersCount === 1 ? 'orden pendiente' : 'órdenes pendientes'}
+            </span>
+          )}
+
           {attachedCount > 0 && (
             <span className="px-3 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-1">
               <FileText className="w-3.5 h-3.5 text-emerald-600" />

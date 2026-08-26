@@ -43,6 +43,14 @@ router.get('/', (req: AuthRequest, res) => {
     for (const app of appointments) {
       const results = db.prepare('SELECT * FROM exam_results WHERE appointment_id = ? AND family_id = ? ORDER BY created_at DESC').all([app.id, familyId]) as any[];
       app.attached_results = results;
+
+      const orders = db.prepare('SELECT mo.*, p.name as patient_name FROM medical_orders mo JOIN patients p ON mo.patient_id = p.id WHERE mo.appointment_id = ? AND mo.family_id = ? ORDER BY mo.created_at ASC').all([app.id, familyId]) as any[];
+      app.medical_orders = orders;
+
+      if (app.origin_order_id) {
+        const originOrder = db.prepare('SELECT mo.*, a.title as source_appointment_title FROM medical_orders mo LEFT JOIN appointments a ON mo.appointment_id = a.id WHERE mo.id = ? AND mo.family_id = ?').get([app.origin_order_id, familyId]) as any;
+        app.origin_order = originOrder || null;
+      }
     }
 
     return res.json(appointments);
@@ -107,6 +115,7 @@ router.post('/', (req: AuthRequest, res) => {
       prep_instructions,
       photo_url,
       doctor_notes,
+      origin_order_id,
     } = req.body;
 
     if (!patient_id || typeof patient_id !== 'string' || !title || typeof title !== 'string' || !date_time) {
@@ -127,8 +136,8 @@ router.post('/', (req: AuthRequest, res) => {
     db.prepare(`
       INSERT INTO appointments (
         id, family_id, patient_id, title, appointment_type, specialist, specialty,
-        location, date_time, requires_fasting, prep_instructions, photo_url, status, doctor_notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?)
+        location, date_time, requires_fasting, prep_instructions, photo_url, status, doctor_notes, origin_order_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, ?)
     `).run([
       id,
       familyId,
@@ -142,8 +151,13 @@ router.post('/', (req: AuthRequest, res) => {
       fastingInt,
       typeof prep_instructions === 'string' ? prep_instructions.trim() : null,
       typeof photo_url === 'string' ? photo_url.trim() : null,
-      typeof doctor_notes === 'string' ? doctor_notes.trim() : null
+      typeof doctor_notes === 'string' ? doctor_notes.trim() : null,
+      typeof origin_order_id === 'string' ? origin_order_id.trim() : null
     ]);
+
+    if (origin_order_id) {
+      db.prepare('UPDATE medical_orders SET linked_appointment_id = ?, status = ? WHERE id = ? AND family_id = ?').run([id, 'agendada', origin_order_id, familyId]);
+    }
 
     const appointment = db.prepare('SELECT * FROM appointments WHERE id = ? AND family_id = ?').get(id, familyId) as any;
     if (patient) {
@@ -193,6 +207,7 @@ router.put('/:id', (req: AuthRequest, res) => {
       photo_url,
       status,
       doctor_notes,
+      origin_order_id,
     } = req.body;
 
     const existing = db.prepare('SELECT * FROM appointments WHERE id = ? AND family_id = ?').get(id, familyId) as any;
@@ -213,7 +228,7 @@ router.put('/:id', (req: AuthRequest, res) => {
       UPDATE appointments SET
         patient_id = ?, title = ?, appointment_type = ?, specialist = ?, specialty = ?,
         location = ?, date_time = ?, requires_fasting = ?, prep_instructions = ?,
-        photo_url = ?, status = ?, doctor_notes = ?
+        photo_url = ?, status = ?, doctor_notes = ?, origin_order_id = ?
       WHERE id = ? AND family_id = ?
     `).run([
       targetPatientId,
@@ -228,6 +243,7 @@ router.put('/:id', (req: AuthRequest, res) => {
       photo_url !== undefined ? (typeof photo_url === 'string' ? photo_url.trim() : null) : existing.photo_url,
       typeof status === 'string' ? status.trim() : existing.status,
       doctor_notes !== undefined ? (typeof doctor_notes === 'string' ? doctor_notes.trim() : null) : existing.doctor_notes,
+      typeof origin_order_id === 'string' ? origin_order_id.trim() : existing.origin_order_id,
       id,
       familyId
     ]);

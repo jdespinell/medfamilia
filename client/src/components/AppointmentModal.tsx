@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Camera, Sparkles, AlertTriangle, CheckCircle2, FileText, Image as ImageIcon, Upload, Plus } from 'lucide-react';
 import { apiRequest } from '../api';
-import { Patient, Appointment, Specialty } from '../types';
+import { Patient, Appointment, Specialty, MedicalOrder } from '../types';
 
 interface AppointmentModalProps {
   patients: Patient[];
@@ -57,11 +57,23 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // Step 2 Verification Modal flag
   const [isVerified, setIsVerified] = useState(Boolean(appointmentToEdit));
 
+  // Pending Orders
+  const [pendingOrders, setPendingOrders] = useState<MedicalOrder[]>([]);
+  const [originOrderId, setOriginOrderId] = useState<string>('');
+
   useEffect(() => {
     apiRequest('/specialties')
       .then((data) => setSpecialtiesList(data))
       .catch((err) => console.error('Error cargando especialidades:', err));
   }, []);
+
+  useEffect(() => {
+    if (!appointmentToEdit) {
+      apiRequest('/medical-orders/pending')
+        .then(data => setPendingOrders(data))
+        .catch(err => console.error('Error cargando órdenes pendientes:', err));
+    }
+  }, [appointmentToEdit]);
 
   const handleCreateCustomSpecialty = async () => {
     if (!newSpecialtyName.trim()) return;
@@ -173,6 +185,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         prep_instructions: prepInstructions,
         photo_url: photoUrl,
         doctor_notes: doctorNotes,
+        ...(originOrderId ? { origin_order_id: originOrderId } : {}),
       };
 
       if (appointmentToEdit) {
@@ -440,6 +453,27 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   ))}
                 </select>
               </div>
+
+              {/* Origin Order (Optional) */}
+              {!appointmentToEdit && pendingOrders.length > 0 && (
+                <div>
+                  <label className="block text-sm font-bold text-slate-800 mb-1.5">
+                    📋 Orden de Origen (Opcional)
+                  </label>
+                  <select
+                    value={originOrderId}
+                    onChange={(e) => setOriginOrderId(e.target.value)}
+                    className="w-full p-3.5 text-base rounded-2xl border-2 border-slate-200 focus:border-blue-600 focus:outline-none bg-slate-50 font-bold"
+                  >
+                    <option value="">-- Sin orden de origen --</option>
+                    {pendingOrders.map(o => (
+                      <option key={o.id} value={o.id}>
+                        {o.title} ({o.patient_name || 'Paciente'}) - {o.order_type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Title */}
               <div>

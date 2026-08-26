@@ -49,6 +49,24 @@ export interface ExamResult {
   created_at: string;
 }
 
+export interface MedicalOrder {
+  id: string;
+  family_id: string;
+  appointment_id: string;
+  patient_id: string;
+  patient_name?: string;
+  order_type: 'examen' | 'especialista' | 'procedimiento' | 'laboratorio';
+  title: string;
+  description?: string;
+  file_url?: string;
+  file_type?: 'pdf' | 'image';
+  status: 'pendiente' | 'agendada' | 'completada';
+  linked_appointment_id?: string;
+  linked_appointment?: Appointment;
+  source_appointment_title?: string;
+  created_at: string;
+}
+
 export interface Appointment {
   id: string;
   family_id: string;
@@ -68,4 +86,7 @@ export interface Appointment {
   status: 'pendiente' | 'completada' | 'cancelada';
   google_event_id?: string;
   attached_results?: ExamResult[];
+  origin_order_id?: string;
+  origin_order?: MedicalOrder;
+  medical_orders?: MedicalOrder[];
 }

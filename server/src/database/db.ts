@@ -138,9 +138,29 @@ export function initDatabase() {
       expires_at TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS medical_orders (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      appointment_id TEXT NOT NULL,
+      patient_id TEXT NOT NULL,
+      order_type TEXT NOT NULL DEFAULT 'examen',
+      title TEXT NOT NULL,
+      description TEXT,
+      file_url TEXT,
+      file_type TEXT,
+      status TEXT NOT NULL DEFAULT 'pendiente',
+      linked_appointment_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE,
+      FOREIGN KEY (appointment_id) REFERENCES appointments (id) ON DELETE CASCADE,
+      FOREIGN KEY (patient_id) REFERENCES patients (id) ON DELETE CASCADE,
+      FOREIGN KEY (linked_appointment_id) REFERENCES appointments (id) ON DELETE SET NULL
+    );
   `);
 
   // Safe migrations for existing SQLite installations
+  try { db.exec('ALTER TABLE appointments ADD COLUMN origin_order_id TEXT;'); } catch (e) {}
   try { db.exec('ALTER TABLE appointments ADD COLUMN doctor_notes TEXT;'); } catch (e) {}
   try { db.exec('ALTER TABLE families ADD COLUMN phone_number TEXT;'); } catch (e) {}
   try { db.exec('ALTER TABLE families ADD COLUMN subscription_status TEXT DEFAULT "trial";'); } catch (e) {}

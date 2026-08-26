@@ -3,11 +3,68 @@ import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 import { sendWhatsAppMessage, sendWhatsAppMedia, ensureWhatsAppWebhook } from '../services/whatsapp.js';
-import { extractAppointmentFromText, processMedicalAssistantQuery, ExtractedAppointmentData } from '../services/gemini.js';
+import { extractAppointmentFromText, processMedicalAssistantQuery, classifyAndProcessMedicalDocument, summarizeExamResult, ExtractedAppointmentData } from '../services/gemini.js';
 import { syncAppointmentToGoogleCalendar } from '../services/googleCalendar.js';
 import db from '../database/db.js';
 
 const router = Router();
+
+interface PendingMessageBatch {
+  familyId: string;
+  familyName: string;
+  formattedPhone: string;
+  messages: Array<{
+    text: string;
+    hasMedia: boolean;
+    mediaKey?: string;
+    mediaType?: 'image' | 'document';
+    mediaMimeType?: string;
+    messageObj?: any;
+  }>;
+  timer: ReturnType<typeof setTimeout>;
+  timestamp: number;
+}
+
+const pendingMessageBatches = new Map<string, PendingMessageBatch>();
+const BATCH_DELAY_MS = 4000; // 4 seconds to accumulate messages
+
+async function downloadWhatsAppMedia(messageObj: any): Promise<{ base64: string; mimeType: string } | null> {
+  try {
+    const evolutionApiUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
+    const evolutionApiKey = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+    const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
+
+    const response = await fetch(
+      `${evolutionApiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, 
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': evolutionApiKey,
+        },
+        body: JSON.stringify({
+          message: messageObj,
+          convertToMp4: false,
+        }),
+      }
+    );
+
+    if (!response.ok) return null;
+    const data = await response.json() as any;
+    const base64 = data?.base64 || data?.data;
+    if (!base64) return null;
+
+    const mimeType = messageObj?.message?.imageMessage?.mimetype || 
+                     messageObj?.message?.documentMessage?.mimetype || 
+                     'image/jpeg';
+
+    return { base64, mimeType };
+  } catch (err) {
+    console.error('Error descargando media de WhatsApp:', err);
+    return null;
+  }
+}
+
 
 function getLocalTimestamp(): string {
   const now = new Date();
@@ -545,126 +602,44 @@ router.post('/webhook', async (req: Request, res: Response) => {
           return res.sendStatus(200);
         }
 
-        // C) TODAS LAS DEMÁS PREGUNTAS Y TEXTOS EN LENGUAJE NATURAL PASAN POR LA IA DE GEMINI
-        const allowed = checkAndIncrementAiUsage(familyId);
-        if (!allowed) {
-          console.log(`[${getLocalTimestamp()}] ⚠️ [Límite Diario] Familia ${familyName} alcanzó la cuota de 15 peticiones de IA por hoy.`);
-          await sendWhatsAppMessage(
-            formattedPhone,
-            `⚠️ *Límite diario de IA alcanzado*\n\nHas alcanzado el límite máximo diario de ${MAX_DAILY_AI_REQUESTS} consultas por IA en WhatsApp para tu cuenta familiar hoy.\n\nPara agendar más citas ingresa directamente en nuestra App Web: https://medfamilia.app`
-          );
-          return res.sendStatus(200);
-        }
-
-        try {
-          console.log(`[${getLocalTimestamp()}] 🤖 [Flujo: Asistente Gemini IA] Consultando Inteligencia Artificial con contexto de la familia para +${formattedPhone}...`);
-
-          // Fetch full family context for Gemini AI
-          // Fetch full family context for Gemini AI (including photo_url of medical orders in appointments)
-          const patients = db.prepare('SELECT id, name FROM patients WHERE family_id = ? ORDER BY created_at ASC').all(familyId) as any[];
-          const upcomingAppointments = db.prepare(`
-            SELECT a.id, a.title, a.date_time, a.photo_url, p.name as patient_name
-            FROM appointments a
-            JOIN patients p ON a.patient_id = p.id
-            WHERE a.family_id = ? AND a.status != 'cancelada'
-            ORDER BY a.date_time ASC LIMIT 10
-          `).all(familyId) as any[];
-
-          const recentExams = db.prepare(`
-            SELECT e.id, e.title, e.summary_ai, e.file_url, e.file_type, e.created_at, p.name as patient_name
-            FROM exam_results e
-            JOIN patients p ON e.patient_id = p.id
-            WHERE e.family_id = ?
-            ORDER BY e.created_at DESC LIMIT 10
-          `).all(familyId) as any[];
-
-          const aiResult = await processMedicalAssistantQuery(userText, {
-            familyName,
-            patients,
-            upcomingAppointments,
-            recentExams
+        // C) TODAS LAS DEMÁS PREGUNTAS Y TEXTOS EN LENGUAJE NATURAL PASAN POR LA IA DE GEMINI (CON BATCHING)
+        const hasMedia = !!(messageObj?.message?.imageMessage || messageObj?.message?.documentMessage);
+        
+        let batch = pendingMessageBatches.get(formattedPhone);
+        if (batch) {
+          clearTimeout(batch.timer);
+          batch.messages.push({
+            text: userText,
+            hasMedia,
+            messageObj
           });
-
-          // 1. INTENT: CREAR NUEVA CITA
-          if (aiResult.intent === 'appointment' && aiResult.appointmentData) {
-            const extracted = aiResult.appointmentData;
-            console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Cita] Título: "${extracted.title}" | Fecha: "${extracted.date_time}" | Especialidad: "${extracted.specialty}"`);
-
-            const patientId = patients[0]?.id || uuidv4();
-            const patientName = patients[0]?.name || 'Familiar';
-
-            pendingAppointmentDrafts.set(formattedPhone, {
-              familyId,
-              patientId,
-              patientName,
-              extracted: {
-                ...extracted,
-                date_time: extracted.date_time || new Date().toISOString()
-              },
-              timestamp: Date.now()
-            });
-
-            const dateVal = extracted.date_time || new Date().toISOString();
-            const dateFormatted = new Date(dateVal).toLocaleString('es-ES', {
-              weekday: 'short',
-              day: 'numeric',
-              month: 'short',
-              hour: '2-digit',
-              minute: '2-digit'
-            });
-
-            const confirmationMsg = `📋 *CONFIRMACIÓN DE CITA MÉDICA*\n\nIdentifiqué los siguientes datos:\n\n📌 *Cita:* ${extracted.title}\n👤 *Paciente:* ${patientName}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha y Hora:* ${dateFormatted}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n⚠️ *Ayuno:* ${extracted.requires_fasting ? 'Sí (Requiere Ayuno)' : 'No'}\n\n------------------------------------\n👇 *¿Deseas confirmar y guardar esta cita?*\n1️⃣ Escribe *1* o *SI* para Confirmar y Agendar\n2️⃣ Escribe *2* o *CANCELAR* para Descartar`;
-
-            await sendWhatsAppMessage(formattedPhone, confirmationMsg);
-            console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Enviada] Borrador de cita enviado a +${formattedPhone}`);
-          } 
-          // 2. INTENT: SOLICITUD DE ARCHIVO FÍSICO (ORDEN MÉDICA DE CITA O RESULTADO DE EXAMEN)
-          else if (aiResult.intent === 'send_exam_file' && (aiResult.requestedFileUrl || aiResult.requestedExamId)) {
-            let targetFileUrl = aiResult.requestedFileUrl || '';
-
-            if (!targetFileUrl && aiResult.requestedExamId) {
-              const exam = db.prepare('SELECT file_url FROM exam_results WHERE id = ? AND family_id = ?').get(aiResult.requestedExamId, familyId) as any;
-              if (exam) targetFileUrl = exam.file_url;
-            }
-
-            console.log(`[${getLocalTimestamp()}] 📄 [Solicitud de Archivo/Orden] Buscando archivo URL: "${targetFileUrl}"`);
-
-            if (targetFileUrl) {
-              const filename = path.basename(targetFileUrl.split('?')[0]);
-              const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
-              const localPath = path.join(uploadsDir, filename);
-
-              if (fs.existsSync(localPath)) {
-                const fileBuffer = fs.readFileSync(localPath);
-                const isPdf = filename.toLowerCase().endsWith('.pdf');
-                const base64Media = fileBuffer.toString('base64');
-                const mediaType = isPdf ? 'document' : 'image';
-                const caption = `📄 *Documento / Orden Médica: ${filename}*\n\n*MedFamilia*`;
-
-                const sent = await sendWhatsAppMedia(formattedPhone, base64Media, mediaType, filename, caption);
-                if (sent) {
-                  console.log(`[${getLocalTimestamp()}] ✅ [Archivo Enviado] Documento/Orden "${filename}" enviado exitosamente a +${formattedPhone}`);
-                }
-                return res.sendStatus(200);
-              } else {
-                console.warn(`[${getLocalTimestamp()}] ⚠️ [Archivo No Encontrado en Disco] Buscado en: ${localPath}`);
-              }
-            }
-
-            await sendWhatsAppMessage(formattedPhone, `📄 No se encontró el archivo físico de la orden o examen en el servidor. Puedes consultarlo en la App Web: https://medfamilia.app`);
-          } 
-          // 3. INTENT: RESPUESTA CONVERSACIONAL GENERAL DE IA
-          else {
-            const answer = aiResult.answerText || 'Recibí tu consulta. Para agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.';
-            console.log(`[${getLocalTimestamp()}] ✨ [IA Respuesta Inteligente] Entregando respuesta conversacional a +${formattedPhone}`);
-
-            await sendWhatsAppMessage(formattedPhone, answer);
-            console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Respuesta conversacional de Gemini enviada por WhatsApp a +${formattedPhone}`);
-          }
-        } catch (aiErr: any) {
-          console.error(`[${getLocalTimestamp()}] ❌ [Error IA] Fallo procesando consulta con Gemini:`, aiErr?.message || aiErr);
-          await sendWhatsAppMessage(formattedPhone, 'Recibí tu mensaje. Si deseas agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.');
+        } else {
+          batch = {
+            familyId,
+            familyName,
+            formattedPhone,
+            messages: [{
+              text: userText,
+              hasMedia,
+              messageObj
+            }],
+            timestamp: Date.now(),
+            timer: setTimeout(() => {
+              processBatchedMessages(formattedPhone).catch(err => {
+                console.error(`Error procesando lote para ${formattedPhone}:`, err);
+              });
+            }, BATCH_DELAY_MS)
+          };
         }
+        
+        // Update the timer
+        batch.timer = setTimeout(() => {
+          processBatchedMessages(formattedPhone).catch(err => {
+            console.error(`Error procesando lote para ${formattedPhone}:`, err);
+          });
+        }, BATCH_DELAY_MS);
+        
+        pendingMessageBatches.set(formattedPhone, batch);
       }
     }
 
@@ -674,5 +649,207 @@ router.post('/webhook', async (req: Request, res: Response) => {
     return res.sendStatus(500);
   }
 });
+
+async function processBatchedMessages(phone: string) {
+  const batch = pendingMessageBatches.get(phone);
+  if (!batch) return;
+  
+  pendingMessageBatches.delete(phone);
+  const { familyId, familyName, formattedPhone, messages } = batch;
+
+  const allowed = checkAndIncrementAiUsage(familyId);
+  if (!allowed) {
+    console.log(`[${getLocalTimestamp()}] ⚠️ [Límite Diario] Familia ${familyName} alcanzó la cuota de 15 peticiones de IA por hoy.`);
+    await sendWhatsAppMessage(
+      formattedPhone,
+      `⚠️ *Límite diario de IA alcanzado*\n\nHas alcanzado el límite máximo diario de ${MAX_DAILY_AI_REQUESTS} consultas por IA en WhatsApp para tu cuenta familiar hoy.\n\nPara agendar más citas ingresa directamente en nuestra App Web: https://medfamilia.app`
+    );
+    return;
+  }
+
+  try {
+    console.log(`[${getLocalTimestamp()}] 🤖 [Flujo: Asistente Gemini IA] Procesando lote de ${messages.length} mensajes para +${formattedPhone}...`);
+
+    const combinedText = messages.map(m => m.text).join('\n');
+    const mediaAttachments: Array<{ base64: string; mimeType: string }> = [];
+
+    for (const msg of messages) {
+      if (msg.hasMedia && msg.messageObj) {
+        const media = await downloadWhatsAppMedia(msg.messageObj);
+        if (media) {
+          mediaAttachments.push(media);
+        }
+      }
+    }
+
+    const patients = db.prepare('SELECT id, name FROM patients WHERE family_id = ? ORDER BY created_at ASC').all(familyId) as any[];
+    const upcomingAppointments = db.prepare(`
+      SELECT a.id, a.title, a.date_time, a.photo_url, p.name as patient_name
+      FROM appointments a
+      JOIN patients p ON a.patient_id = p.id
+      WHERE a.family_id = ? AND a.status != 'cancelada'
+      ORDER BY a.date_time ASC LIMIT 10
+    `).all(familyId) as any[];
+
+    const recentExams = db.prepare(`
+      SELECT e.id, e.title, e.summary_ai, e.file_url, e.file_type, e.created_at, p.name as patient_name
+      FROM exam_results e
+      JOIN patients p ON e.patient_id = p.id
+      WHERE e.family_id = ?
+      ORDER BY e.created_at DESC LIMIT 10
+    `).all(familyId) as any[];
+
+    const aiResult = await processMedicalAssistantQuery(combinedText, {
+      familyName,
+      patients,
+      upcomingAppointments,
+      recentExams
+    }, mediaAttachments);
+
+    // 1. INTENT: CREAR NUEVA CITA
+    if (aiResult.intent === 'appointment' && aiResult.appointmentData) {
+      const extracted = aiResult.appointmentData;
+      console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Cita] Título: "${extracted.title}" | Fecha: "${extracted.date_time}" | Especialidad: "${extracted.specialty}"`);
+
+      const patientId = patients[0]?.id || uuidv4();
+      const patientName = patients[0]?.name || 'Familiar';
+
+      pendingAppointmentDrafts.set(formattedPhone, {
+        familyId,
+        patientId,
+        patientName,
+        extracted: {
+          ...extracted,
+          date_time: extracted.date_time || new Date().toISOString()
+        },
+        timestamp: Date.now()
+      });
+
+      const dateVal = extracted.date_time || new Date().toISOString();
+      const dateFormatted = new Date(dateVal).toLocaleString('es-ES', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      const confirmationMsg = `📋 *CONFIRMACIÓN DE CITA MÉDICA*\n\nIdentifiqué los siguientes datos:\n\n📌 *Cita:* ${extracted.title}\n👤 *Paciente:* ${patientName}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha y Hora:* ${dateFormatted}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n⚠️ *Ayuno:* ${extracted.requires_fasting ? 'Sí (Requiere Ayuno)' : 'No'}\n\n------------------------------------\n👇 *¿Deseas confirmar y guardar esta cita?*\n1️⃣ Escribe *1* o *SI* para Confirmar y Agendar\n2️⃣ Escribe *2* o *CANCELAR* para Descartar`;
+
+      await sendWhatsAppMessage(formattedPhone, confirmationMsg);
+      console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Enviada] Borrador de cita enviado a +${formattedPhone}`);
+    } 
+    // 2. INTENT: UPLOAD ORDER
+    else if (aiResult.intent === 'upload_order' && aiResult.orderData) {
+      console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Orden] Título: "${aiResult.orderData.title}"`);
+      const patientId = aiResult.patientId || patients[0]?.id || uuidv4();
+      
+      let photoUrl = '';
+      if (mediaAttachments.length > 0) {
+        const attach = mediaAttachments[0];
+        const ext = attach.mimeType.includes('pdf') ? 'pdf' : 'jpg';
+        const filename = `order_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
+        const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+        fs.writeFileSync(path.join(uploadsDir, filename), Buffer.from(attach.base64, 'base64'));
+        photoUrl = `/uploads/${filename}`;
+      }
+
+      db.prepare(`
+        INSERT INTO appointments (
+          id, family_id, patient_id, title, appointment_type, specialty, photo_url, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run([
+        uuidv4(), familyId, patientId, aiResult.orderData.title, aiResult.orderData.order_type || 'consulta', aiResult.orderData.specialty || 'General', photoUrl || null, 'pendiente'
+      ]);
+
+      const answer = aiResult.answerText || `✅ He guardado la orden médica para ${aiResult.patientName || 'tu familiar'}.`;
+      await sendWhatsAppMessage(formattedPhone, answer);
+    }
+    // 3. INTENT: UPLOAD EXAM RESULT
+    else if (aiResult.intent === 'upload_exam_result' && aiResult.examData) {
+      console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Examen] Título: "${aiResult.examData.title}"`);
+      const patientId = aiResult.patientId || patients[0]?.id || uuidv4();
+      
+      let fileUrl = '';
+      let examSummary = aiResult.answerText || 'Resumen de examen no disponible.';
+      let savedFileType = 'image';
+      if (mediaAttachments.length > 0) {
+        const attach = mediaAttachments[0];
+        savedFileType = attach.mimeType.includes('pdf') ? 'pdf' : 'image';
+        const ext = attach.mimeType.includes('pdf') ? 'pdf' : 'jpg';
+        const filename = `exam_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
+        const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+        const filepath = path.join(uploadsDir, filename);
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+        fs.writeFileSync(filepath, Buffer.from(attach.base64, 'base64'));
+        fileUrl = `/uploads/${filename}`;
+
+        try {
+          examSummary = await summarizeExamResult(filepath, attach.mimeType);
+        } catch (e) {
+          console.error("Error summarizing exam result", e);
+        }
+      }
+
+      db.prepare(`
+        INSERT INTO exam_results (
+          id, family_id, patient_id, title, file_url, file_type, summary_ai
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run([
+        uuidv4(), familyId, patientId, aiResult.examData.title, fileUrl || null, savedFileType, examSummary
+      ]);
+
+      const answer = aiResult.answerText || `✅ He guardado el resultado del examen para ${aiResult.patientName || 'tu familiar'}.`;
+      await sendWhatsAppMessage(formattedPhone, answer + (examSummary ? "\n\n*Resumen:*\n" + examSummary : ""));
+    }
+    // 4. INTENT: SOLICITUD DE ARCHIVO FÍSICO
+    else if (aiResult.intent === 'send_exam_file' && (aiResult.requestedFileUrl || aiResult.requestedExamId)) {
+      let targetFileUrl = aiResult.requestedFileUrl || '';
+
+      if (!targetFileUrl && aiResult.requestedExamId) {
+        const exam = db.prepare('SELECT file_url FROM exam_results WHERE id = ? AND family_id = ?').get(aiResult.requestedExamId, familyId) as any;
+        if (exam) targetFileUrl = exam.file_url;
+      }
+
+      console.log(`[${getLocalTimestamp()}] 📄 [Solicitud de Archivo/Orden] Buscando archivo URL: "${targetFileUrl}"`);
+
+      if (targetFileUrl) {
+        const filename = path.basename(targetFileUrl.split('?')[0]);
+        const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+        const localPath = path.join(uploadsDir, filename);
+
+        if (fs.existsSync(localPath)) {
+          const fileBuffer = fs.readFileSync(localPath);
+          const isPdf = filename.toLowerCase().endsWith('.pdf');
+          const base64Media = fileBuffer.toString('base64');
+          const mediaType = isPdf ? 'document' : 'image';
+          const caption = `📄 *Documento / Orden Médica: ${filename}*\n\n*MedFamilia*`;
+
+          const sent = await sendWhatsAppMedia(formattedPhone, base64Media, mediaType, filename, caption);
+          if (sent) {
+            console.log(`[${getLocalTimestamp()}] ✅ [Archivo Enviado] Documento/Orden "${filename}" enviado exitosamente a +${formattedPhone}`);
+          }
+          return;
+        } else {
+          console.warn(`[${getLocalTimestamp()}] ⚠️ [Archivo No Encontrado en Disco] Buscado en: ${localPath}`);
+        }
+      }
+
+      await sendWhatsAppMessage(formattedPhone, `📄 No se encontró el archivo físico de la orden o examen en el servidor. Puedes consultarlo en la App Web: https://medfamilia.app`);
+    } 
+    // 5. INTENT: RESPUESTA CONVERSACIONAL GENERAL
+    else {
+      const answer = aiResult.answerText || 'Recibí tu consulta. Para agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.';
+      console.log(`[${getLocalTimestamp()}] ✨ [IA Respuesta Inteligente] Entregando respuesta conversacional a +${formattedPhone}`);
+
+      await sendWhatsAppMessage(formattedPhone, answer);
+      console.log(`[${getLocalTimestamp()}] ✅ [Respuesta Enviada] Respuesta conversacional de Gemini enviada por WhatsApp a +${formattedPhone}`);
+    }
+  } catch (aiErr: any) {
+    console.error(`[${getLocalTimestamp()}] ❌ [Error IA] Fallo procesando consulta con Gemini:`, aiErr?.message || aiErr);
+    await sendWhatsAppMessage(formattedPhone, 'Recibí tu mensaje. Si deseas agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.');
+  }
+}
 
 export default router;

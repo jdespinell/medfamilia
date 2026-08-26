@@ -172,13 +172,25 @@ export async function processMedicalAssistantQuery(
     patients: Array<{ id: string; name: string }>;
     upcomingAppointments: Array<{ id?: string; title: string; date_time: string; photo_url?: string; patient_name?: string }>;
     recentExams: Array<{ id?: string; title: string; summary_ai?: string; file_url?: string; file_type?: string; patient_name?: string; created_at: string }>;
-  }
+  },
+  mediaAttachments?: Array<{ base64: string; mimeType: string }>
 ): Promise<{
-  intent: 'appointment' | 'send_exam_file' | 'general_answer';
+  intent: 'appointment' | 'send_exam_file' | 'general_answer' | 'upload_order' | 'upload_exam_result';
   appointmentData?: ExtractedAppointmentData;
   requestedFileUrl?: string;
   requestedExamId?: string;
   answerText?: string;
+  patientId?: string;
+  patientName?: string;
+  orderData?: {
+    order_type: 'examen' | 'especialista' | 'laboratorio' | 'procedimiento';
+    title: string;
+    description?: string;
+    specialty?: string;
+  };
+  examData?: {
+    title: string;
+  };
 }> {
   const ai = getAiInstance();
   const model = getModelName();
@@ -192,19 +204,26 @@ Citas Próximas Registradas (con fotos/órdenes adjuntas): ${JSON.stringify(fami
 Exámenes de Laboratorio / Resultados Recientes: ${JSON.stringify(familyContext.recentExams)}
 
 Consulta del usuario por WhatsApp: "${userText}"
+${mediaAttachments?.length ? '\\nNOTA: El usuario ha enviado imágenes o documentos adjuntos. Analízalos como documentos médicos e identifica a qué paciente de la familia pertenecen basándote en el contenido del documento comparado contra la lista de miembros de la familia.' : ''}
 
 INSTRUCCIONES:
-1. Evalúa si la intención del usuario es CREAR/AGENDAR una NUEVA cita médica (ej: "tengo cita con...", "agendar cita el viernes", "foto de orden", etc.).
-   - Si la intención ES crear/agendar una nueva cita médica, devuelve JSON con intent = "appointment" y los datos extraídos en "appointmentData".
+1. Evalúa si la intención del usuario es CREAR/AGENDAR una NUEVA cita médica a partir de texto (ej: "tengo cita con...", "agendar cita el viernes", etc.).
+   - Devuelve JSON con intent = "appointment" y los datos extraídos en "appointmentData".
 
-2. Evalúa si la intención del usuario es PEDIR QUE LE ENVIEN O MANDEN EL ARCHIVO / FOTO / PDF / ORDEN MÉDICA de una cita u examen (ej: "envíame la orden de espirometría", "mándame la foto de la cita", "envíame el PDF del examen de sangre", "envíame el archivo de Mamá").
+2. Si hay imágenes o documentos adjuntos y corresponden a una ORDEN MÉDICA o REMISIÓN para pedir citas/exámenes:
+   - Devuelve intent = "upload_order", identifica al paciente, extrae los datos de la orden en "orderData" y redacta "answerText".
+
+3. Si hay imágenes o documentos adjuntos y corresponden a un RESULTADO DE EXAMEN MÉDICO:
+   - Devuelve intent = "upload_exam_result", identifica al paciente, extrae el título del examen en "examData" y redacta un resumen en "answerText".
+
+4. Evalúa si la intención del usuario es PEDIR QUE LE ENVIEN O MANDEN EL ARCHIVO / FOTO / PDF / ORDEN MÉDICA de una cita u examen (ej: "envíame la orden de espirometría", "mándame la foto de la cita", "envíame el PDF del examen de sangre").
    - Revisa las Citas Próximas (propiedad photo_url) Y los Exámenes de Laboratorio (propiedad file_url).
-   - En este caso, devuelve intent = "send_exam_file" y asigna en "requestedFileUrl" la URL exacta del archivo (photo_url de la cita o file_url del examen).
+   - En este caso, devuelve intent = "send_exam_file" y asigna en "requestedFileUrl" la URL exacta del archivo.
 
-3. Si la intención es CONSULTAR resultados en texto, responder dudas o asistencia médica general, devuelve JSON con intent = "general_answer" y responde amigablemente en "answerText".
+5. Si la intención es CONSULTAR resultados en texto, responder dudas o asistencia médica general, devuelve JSON con intent = "general_answer" y responde amigablemente en "answerText".
 
 ESTRUCTURA EXCLUSIVA JSON ESPERADA:
-Si es para agendar nueva cita:
+Si es para agendar nueva cita (sólo texto):
 {
   "intent": "appointment",
   "appointmentData": {
@@ -217,6 +236,31 @@ Si es para agendar nueva cita:
     "requires_fasting": false,
     "prep_instructions": "..."
   }
+}
+
+Si es para registrar una orden médica (foto de orden/remisión):
+{
+  "intent": "upload_order",
+  "patientId": "ID del paciente identificado",
+  "patientName": "Nombre del paciente",
+  "orderData": {
+    "order_type": "examen" | "especialista" | "laboratorio" | "procedimiento",
+    "title": "Título descriptivo de la orden",
+    "description": "Descripción/instrucciones",
+    "specialty": "Especialidad médica"
+  },
+  "answerText": "Respuesta amigable describiendo lo que se identificó"
+}
+
+Si es para registrar un resultado de examen:
+{
+  "intent": "upload_exam_result",
+  "patientId": "ID del paciente identificado",
+  "patientName": "Nombre del paciente",
+  "examData": {
+    "title": "Título del examen"
+  },
+  "answerText": "Resumen amigable del resultado"
 }
 
 Si es para enviar la foto, orden o PDF de una cita o examen:
@@ -233,9 +277,24 @@ Si es para responder a la consulta/exámenes/citas en texto:
 `;
 
   try {
+    const requestContents: any[] = [];
+    
+    if (mediaAttachments && mediaAttachments.length > 0) {
+      for (const attachment of mediaAttachments) {
+        requestContents.push({
+          inlineData: {
+            data: attachment.base64,
+            mimeType: attachment.mimeType === 'application/pdf' ? 'application/pdf' : (attachment.mimeType || 'image/jpeg')
+          }
+        });
+      }
+    }
+    
+    requestContents.push({ text: prompt });
+
     const response = await ai.models.generateContent({
       model: model,
-      contents: prompt,
+      contents: requestContents,
     });
 
     const responseText = response.text || '';
@@ -244,6 +303,86 @@ Si es para responder a la consulta/exámenes/citas en texto:
     return JSON.parse(cleanJson);
   } catch (err: any) {
     console.error(`Error procesando asistente de IA con Gemini [${model}]:`, err);
+    throw err;
+  }
+}
+
+export interface ClassifiedDocument {
+  document_type: 'orden_especialista' | 'orden_examen' | 'resultado_examen' | 'cita_agendada' | 'receta_medica' | 'otro';
+  patient_name: string;
+  matched_patient_id?: string;
+  title: string;
+  extracted_data: {
+    specialty?: string;
+    specialist?: string;
+    location?: string;
+    date_time?: string;
+    requires_fasting?: boolean;
+    prep_instructions?: string;
+  };
+  summary: string;
+}
+
+export async function classifyAndProcessMedicalDocument(
+  base64Data: string,
+  mimeType: string,
+  familyContext: {
+    familyName: string;
+    patients: Array<{ id: string; name: string }>;
+  }
+): Promise<ClassifiedDocument> {
+  const ai = getAiInstance();
+  const model = getModelName();
+
+  const prompt = `
+Eres un experto analizando documentos médicos.
+Nombre de la Familia: "${familyContext.familyName}"
+Integrantes de la familia: ${JSON.stringify(familyContext.patients)}
+
+Analiza el documento/imagen adjunto.
+1. Identifica a qué paciente pertenece comparando el nombre en el documento con la lista de integrantes de la familia.
+2. Clasifica el tipo de documento: orden_especialista, orden_examen, resultado_examen, cita_agendada, receta_medica, u otro.
+3. Extrae datos estructurados si aplican.
+4. Genera un resumen amigable en español.
+
+Devuelve EXCLUSIVAMENTE un objeto JSON válido con esta estructura:
+{
+  "document_type": "orden_especialista" | "orden_examen" | "resultado_examen" | "cita_agendada" | "receta_medica" | "otro",
+  "patient_name": "Nombre encontrado en el documento",
+  "matched_patient_id": "ID del integrante de la familia si hubo match, si no omitir",
+  "title": "Título corto descriptivo",
+  "extracted_data": {
+    "specialty": "Especialidad (si aplica)",
+    "specialist": "Nombre del médico (si aplica)",
+    "location": "Lugar (si aplica)",
+    "date_time": "Fecha y hora YYYY-MM-DDTHH:mm (si aplica)",
+    "requires_fasting": true/false (si aplica),
+    "prep_instructions": "Instrucciones (si aplica)"
+  },
+  "summary": "Resumen amigable del documento en español"
+}
+`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: [
+        {
+          inlineData: {
+            data: base64Data,
+            mimeType: mimeType === 'application/pdf' ? 'application/pdf' : (mimeType || 'image/jpeg')
+          }
+        },
+        { text: prompt }
+      ]
+    });
+
+    const responseText = response.text || '';
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    const cleanJson = jsonMatch ? jsonMatch[0] : responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (err: any) {
+    console.error(`Error clasificando documento con Gemini [${model}]:`, err);
     throw err;
   }
 }

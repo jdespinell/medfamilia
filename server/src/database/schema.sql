@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   status VARCHAR(32) NOT NULL DEFAULT 'pendiente',
   google_event_id VARCHAR(255),
   doctor_notes TEXT,
+  origin_order_id VARCHAR(64),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -101,7 +102,25 @@ CREATE TABLE IF NOT EXISTS otp_verifications (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS medical_orders (
+  id VARCHAR(64) PRIMARY KEY,
+  family_id VARCHAR(64) NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  appointment_id VARCHAR(64) NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+  patient_id VARCHAR(64) NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  order_type VARCHAR(64) NOT NULL DEFAULT 'examen',
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  file_url TEXT,
+  file_type VARCHAR(16),
+  status VARCHAR(32) NOT NULL DEFAULT 'pendiente',
+  linked_appointment_id VARCHAR(64) REFERENCES appointments(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes for high-performance multi-tenancy querying
+CREATE INDEX IF NOT EXISTS idx_medical_orders_family ON medical_orders(family_id);
+CREATE INDEX IF NOT EXISTS idx_medical_orders_patient ON medical_orders(patient_id);
+CREATE INDEX IF NOT EXISTS idx_medical_orders_appointment ON medical_orders(appointment_id);
 CREATE INDEX IF NOT EXISTS idx_patients_family ON patients(family_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_family ON appointments(family_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_patient ON appointments(patient_id);
