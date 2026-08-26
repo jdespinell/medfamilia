@@ -283,6 +283,7 @@ export async function processMedicalAssistantQuery(
     familyName: string;
     patients: Array<{ id: string; name: string }>;
     upcomingAppointments: Array<{ id?: string; title: string; date_time: string; photo_url?: string; patient_name?: string }>;
+    allAppointments?: Array<{ id: string; title: string; date_time: string; specialist?: string; specialty?: string; location?: string; patient_name?: string }>;
     pendingOrders?: Array<{ id?: string; title: string; order_type: string; patient_name?: string; description?: string }>;
     recentExams: Array<{ id?: string; title: string; summary_ai?: string; file_url?: string; file_type?: string; patient_name?: string; created_at: string }>;
   },
@@ -300,6 +301,8 @@ export async function processMedicalAssistantQuery(
     title: string;
     description?: string;
     specialty?: string;
+    origin_appointment_id?: string;
+    origin_appointment_title?: string;
   };
   examData?: {
     title: string;
@@ -313,7 +316,7 @@ Tu objetivo es actuar como un asistente de salud real, humano, cálido, empátic
 
 Nombre de la Familia: "${familyContext.familyName}"
 Integrantes de la familia: ${JSON.stringify(familyContext.patients)}
-Citas Próximas Registradas: ${JSON.stringify(familyContext.upcomingAppointments)}
+Citas Registradas (Historial e Próximas): ${JSON.stringify(familyContext.allAppointments || familyContext.upcomingAppointments)}
 Órdenes Médicas Pendientes de Agendar: ${JSON.stringify(familyContext.pendingOrders || [])}
 Exámenes de Laboratorio / Resultados Recientes: ${JSON.stringify(familyContext.recentExams)}
 
@@ -323,12 +326,11 @@ ${mediaAttachments?.length ? `\\nNOTA: El usuario ha adjuntado ${mediaAttachment
 REGLAS DE CLASIFICACIÓN DE DOCUMENTOS/FOTOS ADJUNTOS:
 1. **ORDE MÉDICA / REMISIÓN / VOLANTE DE LABORATORIO (solicitud para hacerse exámenes o pedir citas futuras)**:
    - Devuelve intent = "upload_order".
+   - REGLA DE ORO PARA CITA ORIGEN: Revisa el documento (médico firmante, especialidad, clínica, fecha) y compáralo contra la lista de "Citas Registradas". Si el documento fue expedido durante una de esas citas (ej: cita de Gastroenterología con Dra. Morales), asigna el ID de esa cita en "origin_appointment_id" y su título en "origin_appointment_title".
    - REGLA DE ORO PARA LABORATORIOS: Si la hoja es una solicitud de laboratorio con múltiples pruebas de sangre (ej: Hemograma, Colesterol, TSH, Bilirrubinas, etc.), agrúpalas en 1 SOLA ÓRDEN PRINCIPAL (ej: "Orden de Laboratorio Clínico - Gut Médica").
-   - Redacta "answerText" de forma 100% natural y conversacional: "¡Hola! Recibí la orden de laboratorio para [Paciente]. La registré como 1 orden pendiente en MedFamilia con las pruebas [Lista de pruebas]. ¿Deseas agendar la cita ahora?"
 
 2. **COMPROBANTE O RECORDATORIO DE CITA YA AGENDADA (con fecha y hora concreta)**:
    - Devuelve intent = "appointment" y extrae los datos en "appointmentData".
-   - Redacta una confirmación natural en "answerText".
 
 3. **RESULTADO DE EXAMEN MÉDICO / INFORME DIAGNÓSTICO YA REALIZADO (laboratorio con valores de sangre, ecografía con hallazgos, etc.)**:
    - Devuelve intent = "upload_exam_result", extrae "examData" y redacta un resumen médico claro en español para el usuario.
@@ -358,7 +360,9 @@ ESTRUCTURA EXCLUSIVA JSON ESPERADA:
     "order_type": "examen" | "especialista" | "laboratorio" | "procedimiento",
     "title": "Título descriptivo (ej: Orden de Laboratorio Clínico)",
     "description": "Resumen de las pruebas contenidas",
-    "specialty": "Especialidad"
+    "specialty": "Especialidad",
+    "origin_appointment_id": "ID de la cita de la que proviene la orden si coincide con alguna cita registrada",
+    "origin_appointment_title": "Título de la cita origen encontrada"
   },
   "examData": {
     "title": "Título del examen médico"

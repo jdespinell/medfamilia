@@ -86,15 +86,26 @@ router.use((req, res, next) => {
 
 const MAX_DAILY_AI_REQUESTS = 15; // Maximum AI processing requests per family per day via WhatsApp
 
-interface PendingAppointmentDraft {
+interface PendingWhatsAppDraft {
   familyId: string;
   patientId: string;
   patientName: string;
-  extracted: ExtractedAppointmentData;
+  draftType: 'appointment' | 'order';
+  appointmentData?: ExtractedAppointmentData;
+  orderData?: {
+    order_type: 'examen' | 'especialista' | 'laboratorio' | 'procedimiento';
+    title: string;
+    description?: string;
+    specialty?: string;
+    origin_appointment_id?: string;
+    origin_appointment_title?: string;
+    file_url?: string;
+    file_type?: string;
+  };
   timestamp: number;
 }
 
-const pendingAppointmentDrafts = new Map<string, PendingAppointmentDraft>();
+const pendingWhatsAppDrafts = new Map<string, PendingWhatsAppDraft>();
 
 function checkAndIncrementAiUsage(familyId: string): boolean {
   try {
@@ -512,82 +523,163 @@ router.post('/webhook', async (req: Request, res: Response) => {
         const textLower = userText.toLowerCase().trim();
 
         // A) VERIFICACIÓN DE CONFIRMACIÓN PENDIENTE (0 TOKENS IA)
-        const pendingDraft = pendingAppointmentDrafts.get(formattedPhone);
+        const pendingDraft = pendingWhatsAppDrafts.get(formattedPhone);
         if (pendingDraft && (Date.now() - pendingDraft.timestamp < 15 * 60 * 1000)) {
-          const isConfirm = ['1', 'si', 'sí', 'confirmar', 'ok', 'agendar', 'guardar'].includes(textLower);
-          const isCancel = ['2', 'no', 'cancelar', 'descartar'].includes(textLower);
+          const isConfirm = ['1', 'si', 'sí', 'confirmar', 'ok', 'agendar', 'guardar'].includes(textLower) || textLower.startsWith('1 ');
+          const isCorrect = ['2', 'corregir', 'editar', 'cambiar', 'modificar'].includes(textLower) || textLower.startsWith('2 ') || textLower.startsWith('corregir') || textLower.startsWith('editar') || textLower.startsWith('cambiar');
+          const isCancel = ['3', 'no', 'cancelar', 'descartar'].includes(textLower) || textLower.startsWith('3 ');
 
+          // A.1) CONFIRMAR (OPCIÓN 1)
           if (isConfirm) {
-            console.log(`[${getLocalTimestamp()}] 🟢 [Confirmación Recibida] Usuario +${formattedPhone} confirmó la cita.`);
-            const { extracted, patientId, patientName } = pendingDraft;
-            const newAppointmentId = uuidv4();
-            const dateVal = extracted.date_time || new Date().toISOString();
+            if (pendingDraft.draftType === 'order' && pendingDraft.orderData) {
+              console.log(`[${getLocalTimestamp()}] 🟢 [Confirmación Orden Recibida] Usuario +${formattedPhone} confirmó la orden médica.`);
+              const { orderData, patientId, patientName, familyId } = pendingDraft;
+              const newOrderId = uuidv4();
 
-            db.prepare(`
-              INSERT INTO appointments (
-                id, family_id, patient_id, title, appointment_type, specialist, specialty, location, date_time, requires_fasting, prep_instructions, status
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run([
-              newAppointmentId,
-              familyId,
-              patientId,
-              extracted.title,
-              'consulta',
-              extracted.specialist || null,
-              extracted.specialty || 'General',
-              extracted.location || null,
-              dateVal,
-              extracted.requires_fasting ? 1 : 0,
-              extracted.prep_instructions || null,
-              'pendiente'
-            ]);
+              db.prepare(`
+                INSERT INTO medical_orders (
+                  id, family_id, appointment_id, patient_id, order_type, title, description, file_url, file_type, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')
+              `).run([
+                newOrderId,
+                familyId,
+                orderData.origin_appointment_id || null,
+                patientId,
+                orderData.order_type || 'examen',
+                orderData.title,
+                orderData.description || null,
+                orderData.file_url || null,
+                orderData.file_type || null
+              ]);
 
-            // Sync with Google Calendar if patient is connected
-            const patientObj = db.prepare('SELECT google_refresh_token FROM patients WHERE id = ?').get(patientId) as any;
-            if (patientObj?.google_refresh_token) {
-              try {
-                const eventId = await syncAppointmentToGoogleCalendar(patientObj.google_refresh_token, {
-                  id: newAppointmentId,
-                  title: extracted.title,
-                  date_time: dateVal,
-                  specialist: extracted.specialist,
-                  location: extracted.location,
-                  patient_name: patientName,
-                  requires_fasting: extracted.requires_fasting,
-                  prep_instructions: extracted.prep_instructions
-                });
-                if (eventId) {
-                  db.prepare('UPDATE appointments SET google_event_id = ? WHERE id = ?').run(eventId, newAppointmentId);
+              pendingWhatsAppDrafts.delete(formattedPhone);
+
+              const confirmMsg = `🎉 *¡Órden Médica Guardada!* 🩺\n\n📌 *Título:* ${orderData.title} (${patientName})\n🔬 *Tipo:* ${orderData.order_type.toUpperCase()}\n${orderData.origin_appointment_title ? `🏥 *Cita Origen:* ${orderData.origin_appointment_title}\n` : ''}\n✅ *Registrada en MedFamilia como Pendiente de Agendar.* Puedes ingresa a la App Web para agendarla cuando gustes.`;
+              await sendWhatsAppMessage(formattedPhone, confirmMsg);
+              return res.sendStatus(200);
+            } else if (pendingDraft.draftType === 'appointment' && pendingDraft.appointmentData) {
+              console.log(`[${getLocalTimestamp()}] 🟢 [Confirmación Cita Recibida] Usuario +${formattedPhone} confirmó la cita.`);
+              const { appointmentData: extracted, patientId, patientName, familyId } = pendingDraft;
+              const newAppointmentId = uuidv4();
+              const dateVal = extracted.date_time || new Date().toISOString();
+
+              db.prepare(`
+                INSERT INTO appointments (
+                  id, family_id, patient_id, title, appointment_type, specialist, specialty, location, date_time, requires_fasting, prep_instructions, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `).run([
+                newAppointmentId,
+                familyId,
+                patientId,
+                extracted.title,
+                'consulta',
+                extracted.specialist || null,
+                extracted.specialty || 'General',
+                extracted.location || null,
+                dateVal,
+                extracted.requires_fasting ? 1 : 0,
+                extracted.prep_instructions || null,
+                'pendiente'
+              ]);
+
+              // Sync with Google Calendar if patient is connected
+              const patientObj = db.prepare('SELECT google_refresh_token FROM patients WHERE id = ?').get(patientId) as any;
+              if (patientObj?.google_refresh_token) {
+                try {
+                  const eventId = await syncAppointmentToGoogleCalendar(patientObj.google_refresh_token, {
+                    id: newAppointmentId,
+                    title: extracted.title,
+                    date_time: dateVal,
+                    specialist: extracted.specialist,
+                    location: extracted.location,
+                    patient_name: patientName,
+                    requires_fasting: extracted.requires_fasting,
+                    prep_instructions: extracted.prep_instructions
+                  });
+                  if (eventId) {
+                    db.prepare('UPDATE appointments SET google_event_id = ? WHERE id = ?').run(eventId, newAppointmentId);
+                  }
+                } catch (gErr) {
+                  console.error('Error sincronizando cita con Google Calendar:', gErr);
                 }
-              } catch (gErr) {
-                console.error('Error sincronizando cita con Google Calendar:', gErr);
               }
+
+              pendingWhatsAppDrafts.delete(formattedPhone);
+
+              const dateFormatted = new Date(dateVal).toLocaleString('es-ES', {
+                weekday: 'short',
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+
+              await sendWhatsAppMessage(
+                formattedPhone,
+                `🎉 *¡Cita Guardada y Agendada con Éxito!* 🩺\n\n📌 *Título:* ${extracted.title} (${patientName})\n📅 *Fecha y Hora:* ${dateFormatted}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n\n✅ *Sincronizada en MedFamilia y Google Calendar.*`
+              );
+              return res.sendStatus(200);
             }
-
-            pendingAppointmentDrafts.delete(formattedPhone);
-
-            const dateFormatted = new Date(dateVal).toLocaleString('es-ES', {
-              weekday: 'short',
-              day: 'numeric',
-              month: 'short',
-              hour: '2-digit',
-              minute: '2-digit'
-            });
-
-            await sendWhatsAppMessage(
-              formattedPhone,
-              `🎉 *¡Cita Guardada y Agendada con Éxito!* 🩺\n\n📌 *Título:* ${extracted.title} (${patientName})\n📅 *Fecha y Hora:* ${dateFormatted}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n\n✅ *Sincronizada en MedFamilia y Google Calendar.*`
-            );
-            return res.sendStatus(200);
           }
 
+          // A.2) CORREGIR DATOS (OPCIÓN 2)
+          if (isCorrect) {
+            console.log(`[${getLocalTimestamp()}] ✏️ [Corrección Solicitada] Usuario +${formattedPhone} solicitó corregir borrador.`);
+            const userCorrection = userText.replace(/^(2|corregir|editar|cambiar|modificar)\s*/i, '').trim();
+
+            const patientsList = db.prepare('SELECT id, name FROM patients WHERE family_id = ?').all(familyId) as any[];
+
+            if (pendingDraft.draftType === 'order' && pendingDraft.orderData) {
+              if (userCorrection) {
+                const matchedPatient = patientsList.find((p: any) => userCorrection.toLowerCase().includes(p.name.toLowerCase()));
+                if (matchedPatient) {
+                  pendingDraft.patientId = matchedPatient.id;
+                  pendingDraft.patientName = matchedPatient.name;
+                }
+
+                const cleanNewTitle = userCorrection.replace(/^a\s*/i, '').replace(/.*(título|titulo)\s*(a|:|=)?\s*/i, '').trim();
+                if (cleanNewTitle) {
+                  pendingDraft.orderData.title = cleanNewTitle;
+                }
+              }
+
+              pendingDraft.timestamp = Date.now();
+
+              const updatedMsg = `✏️ *BORRADOR DE ÓRDEN MÉDICA ACTUALIZADO*\n\nIdentifiqué los datos con tus correcciones:\n\n📌 *Orden:* ${pendingDraft.orderData.title}\n👤 *Paciente:* ${pendingDraft.patientName}\n🔬 *Tipo:* ${pendingDraft.orderData.order_type.toUpperCase()}\n${pendingDraft.orderData.origin_appointment_title ? `🏥 *Cita Origen:* ${pendingDraft.orderData.origin_appointment_title}\n` : ''}${pendingDraft.orderData.description ? `📝 *Detalles:* ${pendingDraft.orderData.description}\n` : ''}\n------------------------------------\n👇 *¿Qué deseas hacer ahora?*\n1️⃣ Escribe *1* o *SI* para Confirmar y Guardar en MedFamilia\n2️⃣ Escribe *2* + tus cambios para Corregir nuevamente\n3️⃣ Escribe *3* o *CANCELAR* para Descartar`;
+
+              await sendWhatsAppMessage(formattedPhone, updatedMsg);
+              return res.sendStatus(200);
+            } else if (pendingDraft.draftType === 'appointment' && pendingDraft.appointmentData) {
+              if (userCorrection) {
+                const matchedPatient = patientsList.find((p: any) => userCorrection.toLowerCase().includes(p.name.toLowerCase()));
+                if (matchedPatient) {
+                  pendingDraft.patientId = matchedPatient.id;
+                  pendingDraft.patientName = matchedPatient.name;
+                }
+
+                const cleanNewTitle = userCorrection.replace(/^a\s*/i, '').replace(/.*(título|titulo)\s*(a|:|=)?\s*/i, '').trim();
+                if (cleanNewTitle) {
+                  pendingDraft.appointmentData.title = cleanNewTitle;
+                }
+              }
+
+              pendingDraft.timestamp = Date.now();
+
+              const updatedMsg = `✏️ *BORRADOR DE CITA ACTUALIZADO*\n\n📌 *Cita:* ${pendingDraft.appointmentData.title}\n👤 *Paciente:* ${pendingDraft.patientName}\n\n------------------------------------\n👇 *¿Qué deseas hacer ahora?*\n1️⃣ Escribe *1* o *SI* para Confirmar y Agendar\n2️⃣ Escribe *2* + tus cambios para Corregir nuevamente\n3️⃣ Escribe *3* o *CANCELAR* para Descartar`;
+
+              await sendWhatsAppMessage(formattedPhone, updatedMsg);
+              return res.sendStatus(200);
+            }
+          }
+
+          // A.3) CANCELAR / DESCARTAR (OPCIÓN 3)
           if (isCancel) {
-            console.log(`[${getLocalTimestamp()}] 🔴 [Cancelación Recibida] Usuario +${formattedPhone} descartó la cita.`);
-            pendingAppointmentDrafts.delete(formattedPhone);
+            console.log(`[${getLocalTimestamp()}] 🔴 [Cancelación Recibida] Usuario +${formattedPhone} descartó el borrador.`);
+            pendingWhatsAppDrafts.delete(formattedPhone);
 
             await sendWhatsAppMessage(
               formattedPhone,
-              `❌ *Agendamiento Cancelado*\n\nNo se guardó ningún registro en MedFamilia. Si deseas agendar otra cita, envíame los datos nuevamente.`
+              `❌ *Borrador Descartado*\n\nNo se realizó ningún registro en MedFamilia. Si deseas agendar o registrar órdenes, envíame la foto o datos nuevamente.`
             );
             return res.sendStatus(200);
           }
@@ -697,6 +789,14 @@ async function processBatchedMessages(phone: string) {
       ORDER BY a.date_time ASC LIMIT 10
     `).all(familyId) as any[];
 
+    const allAppointments = db.prepare(`
+      SELECT a.id, a.title, a.date_time, a.specialist, a.specialty, a.location, p.name as patient_name
+      FROM appointments a
+      JOIN patients p ON a.patient_id = p.id
+      WHERE a.family_id = ? AND a.status != 'cancelada'
+      ORDER BY a.date_time DESC LIMIT 20
+    `).all(familyId) as any[];
+
     const pendingOrders = db.prepare(`
       SELECT mo.id, mo.title, mo.order_type, mo.description, p.name as patient_name
       FROM medical_orders mo
@@ -717,6 +817,7 @@ async function processBatchedMessages(phone: string) {
       familyName,
       patients,
       upcomingAppointments,
+      allAppointments,
       pendingOrders,
       recentExams
     }, mediaAttachments);
@@ -730,19 +831,20 @@ async function processBatchedMessages(phone: string) {
       }
     }
 
-    // 1. INTENT: CREAR NUEVA CITA
+    // 1. INTENT: CREAR NUEVA CITA (Genera borrador de confirmación en WhatsApp)
     if (aiResult.intent === 'appointment' && aiResult.appointmentData) {
       const extracted = aiResult.appointmentData;
       console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Cita] Título: "${extracted.title}" | Fecha: "${extracted.date_time}" | Especialidad: "${extracted.specialty}"`);
 
-      const patientId = patients[0]?.id || uuidv4();
-      const patientName = patients[0]?.name || 'Familiar';
+      const patientId = aiResult.patientId || patients[0]?.id || uuidv4();
+      const patientName = aiResult.patientName || patients[0]?.name || 'Familiar';
 
-      pendingAppointmentDrafts.set(formattedPhone, {
+      pendingWhatsAppDrafts.set(formattedPhone, {
         familyId,
         patientId,
         patientName,
-        extracted: {
+        draftType: 'appointment',
+        appointmentData: {
           ...extracted,
           date_time: extracted.date_time || new Date().toISOString()
         },
@@ -758,64 +860,54 @@ async function processBatchedMessages(phone: string) {
         minute: '2-digit'
       });
 
-      const confirmationMsg = `📋 *CONFIRMACIÓN DE CITA MÉDICA*\n\nIdentifiqué los siguientes datos:\n\n📌 *Cita:* ${extracted.title}\n👤 *Paciente:* ${patientName}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha y Hora:* ${dateFormatted}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n⚠️ *Ayuno:* ${extracted.requires_fasting ? 'Sí (Requiere Ayuno)' : 'No'}\n\n------------------------------------\n👇 *¿Deseas confirmar y guardar esta cita?*\n1️⃣ Escribe *1* o *SI* para Confirmar y Agendar\n2️⃣ Escribe *2* o *CANCELAR* para Descartar`;
+      const confirmationMsg = `📋 *CONFIRMACIÓN DE CITA MÉDICA*\n\nIdentifiqué los siguientes datos:\n\n📌 *Cita:* ${extracted.title}\n👤 *Paciente:* ${patientName}\n👩‍⚕️ *Especialidad:* ${extracted.specialty || 'General'}\n📅 *Fecha y Hora:* ${dateFormatted}\n📍 *Lugar:* ${extracted.location || 'No especificado'}\n⚠️ *Ayuno:* ${extracted.requires_fasting ? 'Sí (Requiere Ayuno)' : 'No'}\n\n------------------------------------\n👇 *¿Qué deseas hacer con esta cita?*\n1️⃣ Escribe *1* o *SI* para Confirmar y Agendar\n2️⃣ Escribe *2* o *CORREGIR* + tus cambios (ej: *"2 cambiar título a Consulta Neumología"*)\n3️⃣ Escribe *3* o *CANCELAR* para Descartar`;
 
       await sendWhatsAppMessage(formattedPhone, confirmationMsg);
-      console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Enviada] Borrador de cita enviado a +${formattedPhone}`);
+      console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Cita] Borrador de cita enviado a +${formattedPhone}`);
     } 
-    // 2. INTENT: UPLOAD ORDER (Guarda en medical_orders con estado 'pendiente')
+    // 2. INTENT: UPLOAD ORDER (Genera borrador de confirmación en WhatsApp)
     else if (aiResult.intent === 'upload_order' && aiResult.orderData) {
       console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Orden Médica] Título: "${aiResult.orderData.title}"`);
       const patientId = aiResult.patientId || patients[0]?.id || uuidv4();
-      
-      let savedCount = 0;
+      const patientName = aiResult.patientName || patients[0]?.name || 'Familiar';
+
+      let fileUrl = '';
+      let fileType = '';
+
       if (mediaAttachments.length > 0) {
         const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-        for (let i = 0; i < mediaAttachments.length; i++) {
-          const attach = mediaAttachments[i];
-          const fileType = attach.mimeType.includes('pdf') ? 'pdf' : 'image';
-          const ext = attach.mimeType.includes('pdf') ? 'pdf' : 'jpg';
-          const filename = `order_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
-          fs.writeFileSync(path.join(uploadsDir, filename), Buffer.from(attach.base64, 'base64'));
-          const fileUrl = `/api/uploads/${filename}`;
-          const title = mediaAttachments.length > 1 ? `${aiResult.orderData.title} (#${i + 1})` : aiResult.orderData.title;
-
-          db.prepare(`
-            INSERT INTO medical_orders (
-              id, family_id, patient_id, order_type, title, description, file_url, file_type, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')
-          `).run([
-            uuidv4(),
-            familyId,
-            patientId,
-            aiResult.orderData.order_type || 'examen',
-            title,
-            aiResult.orderData.description || null,
-            fileUrl,
-            fileType
-          ]);
-          savedCount++;
-        }
-      } else {
-        db.prepare(`
-          INSERT INTO medical_orders (
-            id, family_id, patient_id, order_type, title, description, status
-          ) VALUES (?, ?, ?, ?, ?, ?, 'pendiente')
-        `).run([
-          uuidv4(),
-          familyId,
-          patientId,
-          aiResult.orderData.order_type || 'examen',
-          aiResult.orderData.title,
-          aiResult.orderData.description || null
-        ]);
-        savedCount++;
+        const attach = mediaAttachments[0];
+        fileType = attach.mimeType.includes('pdf') ? 'pdf' : 'image';
+        const ext = attach.mimeType.includes('pdf') ? 'pdf' : 'jpg';
+        const filename = `order_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
+        fs.writeFileSync(path.join(uploadsDir, filename), Buffer.from(attach.base64, 'base64'));
+        fileUrl = `/api/uploads/${filename}`;
       }
 
-      const answer = aiResult.answerText || `✅ He registrado ${savedCount > 1 ? `${savedCount} órdenes médicas` : 'la orden médica'} en MedFamilia como *Pendientes de Agendar*.`;
-      await sendWhatsAppMessage(formattedPhone, answer);
+      pendingWhatsAppDrafts.set(formattedPhone, {
+        familyId,
+        patientId,
+        patientName,
+        draftType: 'order',
+        orderData: {
+          order_type: aiResult.orderData.order_type || 'examen',
+          title: aiResult.orderData.title,
+          description: aiResult.orderData.description,
+          specialty: aiResult.orderData.specialty,
+          origin_appointment_id: aiResult.orderData.origin_appointment_id,
+          origin_appointment_title: aiResult.orderData.origin_appointment_title,
+          file_url: fileUrl,
+          file_type: fileType
+        },
+        timestamp: Date.now()
+      });
+
+      const confirmationMsg = `📋 *CONFIRMACIÓN DE ÓRDEN MÉDICA*\n\nIdentifiqué la siguiente orden médica:\n\n📌 *Título:* ${aiResult.orderData.title}\n👤 *Paciente:* ${patientName}\n🔬 *Tipo:* ${aiResult.orderData.order_type.toUpperCase()}\n${aiResult.orderData.origin_appointment_title ? `🏥 *Cita Origen:* ${aiResult.orderData.origin_appointment_title}\n` : ''}${aiResult.orderData.description ? `📝 *Detalles:* ${aiResult.orderData.description}\n` : ''}\n------------------------------------\n👇 *¿Qué deseas hacer con esta orden?*\n1️⃣ Escribe *1* o *SI* para Confirmar y Guardar en MedFamilia\n2️⃣ Escribe *2* o *CORREGIR* + tus cambios (ej: *"2 cambiar título a Orden Ecografía"*)\n3️⃣ Escribe *3* o *CANCELAR* para Descartar`;
+
+      await sendWhatsAppMessage(formattedPhone, confirmationMsg);
+      console.log(`[${getLocalTimestamp()}] 📋 [Solicitud Confirmación Orden] Borrador enviado a +${formattedPhone}`);
     }
     // 3. INTENT: UPLOAD EXAM RESULT
     else if (aiResult.intent === 'upload_exam_result' && aiResult.examData) {
