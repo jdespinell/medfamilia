@@ -49,10 +49,16 @@ async function downloadWhatsAppMedia(messageObj: any): Promise<{ base64: string;
       }
     );
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const errTxt = await response.text().catch(() => '');
+      console.warn('Error HTTP de Evolution API al descargar media:', response.status, errTxt);
+      return null;
+    }
     const data = await response.json() as any;
-    const base64 = data?.base64 || data?.data;
-    if (!base64) return null;
+    const rawBase64 = data?.base64 || data?.data;
+    if (!rawBase64) return null;
+
+    const base64 = typeof rawBase64 === 'string' ? rawBase64.replace(/^data:[^;]+;base64,/, '') : rawBase64;
 
     const mimeType = messageObj?.message?.imageMessage?.mimetype || 
                      messageObj?.message?.documentMessage?.mimetype || 
@@ -744,26 +750,31 @@ async function processBatchedMessages(phone: string) {
       console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Orden] Título: "${aiResult.orderData.title}"`);
       const patientId = aiResult.patientId || patients[0]?.id || uuidv4();
       
-      let photoUrl = '';
+      let savedCount = 0;
       if (mediaAttachments.length > 0) {
-        const attach = mediaAttachments[0];
-        const ext = attach.mimeType.includes('pdf') ? 'pdf' : 'jpg';
-        const filename = `order_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
         const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-        fs.writeFileSync(path.join(uploadsDir, filename), Buffer.from(attach.base64, 'base64'));
-        photoUrl = `/uploads/${filename}`;
+
+        for (let i = 0; i < mediaAttachments.length; i++) {
+          const attach = mediaAttachments[i];
+          const ext = attach.mimeType.includes('pdf') ? 'pdf' : 'jpg';
+          const filename = `order_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
+          fs.writeFileSync(path.join(uploadsDir, filename), Buffer.from(attach.base64, 'base64'));
+          const photoUrl = `/uploads/${filename}`;
+          const title = mediaAttachments.length > 1 ? `${aiResult.orderData.title} (#${i + 1})` : aiResult.orderData.title;
+
+          db.prepare(`
+            INSERT INTO appointments (
+              id, family_id, patient_id, title, appointment_type, specialty, photo_url, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run([
+            uuidv4(), familyId, patientId, title, aiResult.orderData.order_type || 'consulta', aiResult.orderData.specialty || 'General', photoUrl, 'pendiente'
+          ]);
+          savedCount++;
+        }
       }
 
-      db.prepare(`
-        INSERT INTO appointments (
-          id, family_id, patient_id, title, appointment_type, specialty, photo_url, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run([
-        uuidv4(), familyId, patientId, aiResult.orderData.title, aiResult.orderData.order_type || 'consulta', aiResult.orderData.specialty || 'General', photoUrl || null, 'pendiente'
-      ]);
-
-      const answer = aiResult.answerText || `✅ He guardado la orden médica para ${aiResult.patientName || 'tu familiar'}.`;
+      const answer = aiResult.answerText || `✅ He registrado ${savedCount > 1 ? `${savedCount} órdenes médicas` : 'la orden médica'} para ${aiResult.patientName || 'tu familiar'}.`;
       await sendWhatsAppMessage(formattedPhone, answer);
     }
     // 3. INTENT: UPLOAD EXAM RESULT
@@ -771,37 +782,48 @@ async function processBatchedMessages(phone: string) {
       console.log(`[${getLocalTimestamp()}] ✨ [IA Detección Examen] Título: "${aiResult.examData.title}"`);
       const patientId = aiResult.patientId || patients[0]?.id || uuidv4();
       
-      let fileUrl = '';
-      let examSummary = aiResult.answerText || 'Resumen de examen no disponible.';
-      let savedFileType = 'image';
-      if (mediaAttachments.length > 0) {
-        const attach = mediaAttachments[0];
-        savedFileType = attach.mimeType.includes('pdf') ? 'pdf' : 'image';
-        const ext = attach.mimeType.includes('pdf') ? 'pdf' : 'jpg';
-        const filename = `exam_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
-        const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
-        const filepath = path.join(uploadsDir, filename);
-        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-        fs.writeFileSync(filepath, Buffer.from(attach.base64, 'base64'));
-        fileUrl = `/uploads/${filename}`;
+      const summaries: string[] = [];
+      let savedCount = 0;
 
-        try {
-          examSummary = await summarizeExamResult(filepath, attach.mimeType);
-        } catch (e) {
-          console.error("Error summarizing exam result", e);
+      if (mediaAttachments.length > 0) {
+        const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+        for (let i = 0; i < mediaAttachments.length; i++) {
+          const attach = mediaAttachments[i];
+          const savedFileType = attach.mimeType.includes('pdf') ? 'pdf' : 'image';
+          const ext = attach.mimeType.includes('pdf') ? 'pdf' : 'jpg';
+          const filename = `exam_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
+          const filepath = path.join(uploadsDir, filename);
+          fs.writeFileSync(filepath, Buffer.from(attach.base64, 'base64'));
+          const fileUrl = `/uploads/${filename}`;
+
+          let singleSummary = '';
+          try {
+            singleSummary = await summarizeExamResult(filepath, attach.mimeType);
+            if (singleSummary) {
+              summaries.push(`📌 *Examen ${mediaAttachments.length > 1 ? `#${i + 1}` : ''}:*\n${singleSummary}`);
+            }
+          } catch (e) {
+            console.error("Error resumiendo examen con Gemini:", e);
+          }
+
+          const title = mediaAttachments.length > 1 ? `${aiResult.examData.title} (#${i + 1})` : aiResult.examData.title;
+
+          db.prepare(`
+            INSERT INTO exam_results (
+              id, family_id, patient_id, title, file_url, file_type, summary_ai
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run([
+            uuidv4(), familyId, patientId, title, fileUrl, savedFileType, singleSummary || 'Resumen no disponible.'
+          ]);
+          savedCount++;
         }
       }
 
-      db.prepare(`
-        INSERT INTO exam_results (
-          id, family_id, patient_id, title, file_url, file_type, summary_ai
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run([
-        uuidv4(), familyId, patientId, aiResult.examData.title, fileUrl || null, savedFileType, examSummary
-      ]);
-
-      const answer = aiResult.answerText || `✅ He guardado el resultado del examen para ${aiResult.patientName || 'tu familiar'}.`;
-      await sendWhatsAppMessage(formattedPhone, answer + (examSummary ? "\n\n*Resumen:*\n" + examSummary : ""));
+      const combinedSummaries = summaries.join('\n\n-------------------------\n\n');
+      const answer = aiResult.answerText || `✅ He guardado y analizado ${savedCount} resultado(s) de examen para ${aiResult.patientName || 'tu familiar'}.`;
+      await sendWhatsAppMessage(formattedPhone, `${answer}${combinedSummaries ? '\n\n' + combinedSummaries : ''}`);
     }
     // 4. INTENT: SOLICITUD DE ARCHIVO FÍSICO
     else if (aiResult.intent === 'send_exam_file' && (aiResult.requestedFileUrl || aiResult.requestedExamId)) {
@@ -840,7 +862,7 @@ async function processBatchedMessages(phone: string) {
     } 
     // 5. INTENT: RESPUESTA CONVERSACIONAL GENERAL
     else {
-      const answer = aiResult.answerText || 'Recibí tu consulta. Para agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.';
+      const answer = aiResult.answerText || 'Recibí tu mensaje. Para agendar una cita o analizar exámenes, por favor envíame las fotos o PDFs.';
       console.log(`[${getLocalTimestamp()}] ✨ [IA Respuesta Inteligente] Entregando respuesta conversacional a +${formattedPhone}`);
 
       await sendWhatsAppMessage(formattedPhone, answer);
@@ -848,7 +870,10 @@ async function processBatchedMessages(phone: string) {
     }
   } catch (aiErr: any) {
     console.error(`[${getLocalTimestamp()}] ❌ [Error IA] Fallo procesando consulta con Gemini:`, aiErr?.message || aiErr);
-    await sendWhatsAppMessage(formattedPhone, 'Recibí tu mensaje. Si deseas agendar una cita o analizar un examen, por favor envíame la foto o PDF correspondiente.');
+    await sendWhatsAppMessage(
+      formattedPhone,
+      `⚠️ Recibí ${messages.length > 1 ? `tus ${messages.length} mensajes/archivos` : 'tu mensaje/archivo'}, pero ocurrió un problema al procesarlos con la Inteligencia Artificial.\n\nPor favor reenvíalos o verifícalos directamente en nuestra App Web: https://medfamilia.app`
+    );
   }
 }
 

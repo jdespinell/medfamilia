@@ -338,9 +338,10 @@ Si es para responder a la consulta/exámenes/citas en texto:
     
     if (mediaAttachments && mediaAttachments.length > 0) {
       for (const attachment of mediaAttachments) {
+        const cleanBase64 = attachment.base64.replace(/^data:[^;]+;base64,/, '');
         requestContents.push({
           inlineData: {
-            data: attachment.base64,
+            data: cleanBase64,
             mimeType: attachment.mimeType === 'application/pdf' ? 'application/pdf' : (attachment.mimeType || 'image/jpeg')
           }
         });
