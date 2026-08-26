@@ -5,6 +5,8 @@ import fs from 'fs';
 import db from '../database/db.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { secureUpload } from '../middleware/upload.js';
+import { aiRateLimiter } from '../middleware/rateLimiter.js';
+import { extractMedicalOrdersFromFile } from '../services/gemini.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -73,8 +75,97 @@ router.get('/pending', (req: AuthRequest, res) => {
   }
 });
 
-// POST / - Create order
-router.post('/', secureUpload.single('file'), (req: AuthRequest, res) => {
+// POST /ai-batch - Process multi-file uploads with AI and create pending orders
+router.post('/ai-batch', aiRateLimiter, secureUpload.array('files', 10), async (req: AuthRequest, res) => {
+  try {
+    const familyId = req.family!.id;
+    const { appointment_id, patient_id } = req.body;
+
+    if (!appointment_id || typeof appointment_id !== 'string' || !patient_id || typeof patient_id !== 'string') {
+      return res.status(400).json({ error: 'Paciente y cita son requeridos.' });
+    }
+
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (files.length === 0) {
+      return res.status(400).json({ error: 'Debe adjuntar al menos un archivo para analizar con IA.' });
+    }
+
+    // Verify patient ownership
+    const patient = db.prepare('SELECT id, name FROM patients WHERE id = ? AND family_id = ?').get(patient_id, familyId) as any;
+    if (!patient) {
+      return res.status(403).json({ error: 'El paciente no pertenece a su grupo familiar.' });
+    }
+
+    // Verify appointment ownership
+    const appt = db.prepare('SELECT id, title FROM appointments WHERE id = ? AND family_id = ?').get(appointment_id, familyId) as any;
+    if (!appt) {
+      return res.status(403).json({ error: 'La cita asociada no pertenece a su grupo familiar.' });
+    }
+
+    const createdOrders: any[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const filePath = file.path;
+      const mimeType = file.mimetype;
+      const safeFilename = path.basename(file.filename);
+      const fileUrl = `/api/uploads/${safeFilename}`;
+      const fileType = mimeType.includes('pdf') ? 'pdf' : 'image';
+
+      let extracted: any[] = [];
+      try {
+        extracted = await extractMedicalOrdersFromFile(filePath, mimeType);
+      } catch (aiErr) {
+        console.error('Error extrayendo orden con Gemini:', aiErr);
+      }
+
+      if (!extracted || extracted.length === 0) {
+        extracted = [{
+          title: `Orden Médica ${files.length > 1 ? `#${i + 1}` : ''}`,
+          order_type: 'examen',
+          description: 'Documento adjuntado pendiente de agendar/efectuar.'
+        }];
+      }
+
+      for (const item of extracted) {
+        const id = uuidv4();
+        const cleanTitle = item.title ? String(item.title).trim() : `Orden Médica ${i + 1}`;
+        const cleanType = ['examen', 'especialista', 'laboratorio', 'procedimiento'].includes(item.order_type) ? item.order_type : 'examen';
+        const cleanDesc = item.description ? String(item.description).trim() : 'Pendiente de agendar / efectuar';
+
+        db.prepare(`
+          INSERT INTO medical_orders (id, family_id, appointment_id, patient_id, order_type, title, description, file_url, file_type, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')
+        `).run([
+          id,
+          familyId,
+          appointment_id,
+          patient_id,
+          cleanType,
+          cleanTitle,
+          cleanDesc,
+          fileUrl,
+          fileType
+        ]);
+
+        const order = db.prepare('SELECT mo.*, p.name as patient_name FROM medical_orders mo JOIN patients p ON mo.patient_id = p.id WHERE mo.id = ? AND mo.family_id = ?').get(id, familyId);
+        createdOrders.push(order);
+      }
+    }
+
+    return res.json({
+      success: true,
+      orders: createdOrders,
+      message: `Se analizó(aron) ${files.length} archivo(s) y se creó(aron) ${createdOrders.length} orden(es) médica(s) pendientes de agendar.`
+    });
+  } catch (error: any) {
+    console.error('Error procesando lote de órdenes médicas con IA:', error);
+    return res.status(500).json({ error: error?.message || 'Error al procesar los archivos con Inteligencia Artificial.' });
+  }
+});
+
+// POST / - Create order (manual or with files)
+router.post('/', secureUpload.array('files', 10), (req: AuthRequest, res) => {
   try {
     const familyId = req.family!.id;
     const { appointment_id, patient_id, order_type, title, description } = req.body;
@@ -95,44 +186,68 @@ router.post('/', secureUpload.single('file'), (req: AuthRequest, res) => {
       return res.status(403).json({ error: 'La cita asociada no pertenece a su grupo familiar.' });
     }
 
-    let fileUrl = null;
-    let fileType = null;
-    
-    if (req.file) {
-      const mimeType = req.file.mimetype;
-      const safeFilename = path.basename(req.file.filename);
-      fileUrl = `/api/uploads/${safeFilename}`;
-      fileType = mimeType.includes('pdf') ? 'pdf' : 'image';
-    }
-
-    const id = uuidv4();
+    const files = (req.files as Express.Multer.File[]) || [];
     const cleanTitle = title.trim();
     const cleanDesc = description && typeof description === 'string' ? description.trim() : null;
     const cleanType = order_type && typeof order_type === 'string' ? order_type.trim() : 'examen';
 
-    db.prepare(`
-      INSERT INTO medical_orders (id, family_id, appointment_id, patient_id, order_type, title, description, file_url, file_type, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run([
-      id,
-      familyId,
-      appointment_id,
-      patient_id,
-      cleanType,
-      cleanTitle,
-      cleanDesc,
-      fileUrl,
-      fileType,
-      'pendiente'
-    ]);
+    const createdOrders: any[] = [];
 
-    const order = db.prepare('SELECT * FROM medical_orders WHERE id = ? AND family_id = ?').get(id, familyId);
-    return res.json(order);
+    if (files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const mimeType = file.mimetype;
+        const safeFilename = path.basename(file.filename);
+        const fileUrl = `/api/uploads/${safeFilename}`;
+        const fileType = mimeType.includes('pdf') ? 'pdf' : 'image';
+
+        const id = uuidv4();
+        const orderTitle = files.length > 1 ? `${cleanTitle} (${i + 1})` : cleanTitle;
+
+        db.prepare(`
+          INSERT INTO medical_orders (id, family_id, appointment_id, patient_id, order_type, title, description, file_url, file_type, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')
+        `).run([
+          id,
+          familyId,
+          appointment_id,
+          patient_id,
+          cleanType,
+          orderTitle,
+          cleanDesc,
+          fileUrl,
+          fileType
+        ]);
+
+        const order = db.prepare('SELECT mo.*, p.name as patient_name FROM medical_orders mo JOIN patients p ON mo.patient_id = p.id WHERE mo.id = ? AND mo.family_id = ?').get(id, familyId);
+        createdOrders.push(order);
+      }
+    } else {
+      const id = uuidv4();
+      db.prepare(`
+        INSERT INTO medical_orders (id, family_id, appointment_id, patient_id, order_type, title, description, file_url, file_type, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'pendiente')
+      `).run([
+        id,
+        familyId,
+        appointment_id,
+        patient_id,
+        cleanType,
+        cleanTitle,
+        cleanDesc
+      ]);
+
+      const order = db.prepare('SELECT mo.*, p.name as patient_name FROM medical_orders mo JOIN patients p ON mo.patient_id = p.id WHERE mo.id = ? AND mo.family_id = ?').get(id, familyId);
+      createdOrders.push(order);
+    }
+
+    return res.json(createdOrders.length === 1 ? createdOrders[0] : createdOrders);
   } catch (error) {
     console.error('Error creando orden médica:', error);
     return res.status(500).json({ error: 'Error al crear la orden médica.' });
   }
 });
+
 
 // PUT /:id - Update order
 router.put('/:id', (req: AuthRequest, res) => {

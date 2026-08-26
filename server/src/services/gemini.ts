@@ -118,6 +118,63 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
 // Export alias for backwards compatibility
 export const extractAppointmentFromImage = extractAppointmentFromFile;
 
+export interface ExtractedMedicalOrder {
+  title: string;
+  order_type: 'examen' | 'especialista' | 'laboratorio' | 'procedimiento';
+  description?: string;
+}
+
+/**
+ * Extracts list of medical orders prescribed in an image or PDF file using Gemini Vision/Document API
+ */
+export async function extractMedicalOrdersFromFile(filePath: string, mimeType: string): Promise<ExtractedMedicalOrder[]> {
+  const ai = getAiInstance();
+  const model = getModelName();
+  const fileBuffer = fs.readFileSync(filePath);
+  const base64Data = fileBuffer.toString('base64');
+
+  const actualMimeType = mimeType.includes('pdf') ? 'application/pdf' : (mimeType || 'image/jpeg');
+
+  const prompt = `
+Analiza la siguiente foto o documento de orden médica, remisión, volante de examen o prescripción.
+Identifica TODAS las órdenes médicas, exámenes de laboratorio, ecografías, radiografías, procedimientos o remisiones a médicos especialistas indicados en el documento.
+
+Devuelve EXCLUSIVAMENTE un arreglo JSON válido de objetos con la siguiente estructura (sin bloques markdown ni texto adicional):
+[
+  {
+    "title": "Título corto y claro de la orden o examen (ej: Ecografía Abdominal Total, Remisión a Cardiología, Hemograma Completo)",
+    "order_type": "examen" | "especialista" | "laboratorio" | "procedimiento",
+    "description": "Indicaciones previas, preparación o detalles visibles si los hay (ej: Ir en ayunas de 8 horas, tomar 4 vasos de agua, llevar exámenes anteriores)"
+  }
+]
+`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: [
+        {
+          inlineData: {
+            data: base64Data,
+            mimeType: actualMimeType,
+          },
+        },
+        { text: prompt },
+      ],
+    });
+
+    const responseText = response.text || '';
+    const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+    const cleanJson = jsonMatch ? jsonMatch[0] : responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleanJson);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch (err: any) {
+    console.error(`Error extrayendo órdenes médicas con Gemini [${model}]:`, err);
+    return [];
+  }
+}
+
+
 /**
  * Summarizes medical exam results (PDF or Image) into senior-friendly clear Spanish.
  */

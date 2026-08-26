@@ -58,8 +58,10 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   const [orderTitle, setOrderTitle] = useState('');
   const [orderType, setOrderType] = useState<MedicalOrder['order_type']>('examen');
   const [orderDescription, setOrderDescription] = useState('');
-  const [orderFile, setOrderFile] = useState<File | null>(null);
+  const [orderFiles, setOrderFiles] = useState<File[]>([]);
   const [savingOrder, setSavingOrder] = useState(false);
+  const [analyzingAi, setAnalyzingAi] = useState(false);
+  const [aiNoticeMessage, setAiNoticeMessage] = useState('');
 
   // Upload results modal state inside detail view
   const [showUploadResult, setShowUploadResult] = useState(false);
@@ -127,8 +129,45 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   };
 
   const handleOrderFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setOrderFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      const selected = Array.from(e.target.files);
+      setOrderFiles((prev) => [...prev, ...selected]);
+    }
+  };
+
+  const handleRemoveOrderFile = (index: number) => {
+    setOrderFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleProcessAiOrders = async () => {
+    if (orderFiles.length === 0) return;
+    setAnalyzingAi(true);
+    setAiNoticeMessage('');
+
+    try {
+      const formData = new FormData();
+      orderFiles.forEach((file) => {
+        formData.append('files', file);
+      });
+      formData.append('appointment_id', appointment.id);
+      formData.append('patient_id', appointment.patient_id);
+
+      const res = await apiRequest('/medical-orders/ai-batch', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res.orders && Array.isArray(res.orders)) {
+        setMedicalOrders((prev) => [...res.orders, ...prev]);
+      }
+      setAiNoticeMessage(res.message || `Se procesaron ${orderFiles.length} archivo(s) y se registraron las órdenes médicas pendientes de agendar.`);
+      setOrderFiles([]);
+      setShowAddOrder(false);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Error procesando órdenes médicas con IA.');
+    } finally {
+      setAnalyzingAi(false);
     }
   };
 
@@ -139,7 +178,9 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
     setSavingOrder(true);
     try {
       const formData = new FormData();
-      if (orderFile) formData.append('file', orderFile);
+      orderFiles.forEach((file) => {
+        formData.append('files', file);
+      });
       formData.append('appointment_id', appointment.id);
       formData.append('patient_id', appointment.patient_id);
       formData.append('title', orderTitle);
@@ -151,11 +192,12 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
         body: formData,
       });
 
-      setMedicalOrders([res, ...medicalOrders]);
+      const newOrders = Array.isArray(res) ? res : [res];
+      setMedicalOrders((prev) => [...newOrders, ...prev]);
       setShowAddOrder(false);
       setOrderTitle('');
       setOrderDescription('');
-      setOrderFile(null);
+      setOrderFiles([]);
       setOrderType('examen');
       onRefresh();
     } catch (err: any) {
@@ -332,78 +374,54 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
               </button>
             </div>
 
-            {/* Inline Form to Upload New Order */}
+            {/* AI Notice Banner */}
+            {aiNoticeMessage && (
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center justify-between animate-in fade-in">
+                <span>{aiNoticeMessage}</span>
+                <button onClick={() => setAiNoticeMessage('')} className="text-emerald-700 hover:text-emerald-900">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Inline Form to Upload New Orders */}
             {showAddOrder && (
-              <form onSubmit={handleAddOrder} className="p-4 rounded-2xl bg-indigo-50/70 border-2 border-indigo-200 space-y-3 animate-in fade-in">
-                <h4 className="text-sm font-bold text-indigo-900">Agregar Nueva Orden</h4>
+              <div className="p-4 rounded-2xl bg-indigo-50/70 border-2 border-indigo-200 space-y-4 animate-in fade-in">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-black text-indigo-950 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-purple-600" />
+                    <span>Agregar Órdenes Médicas</span>
+                  </h4>
+                  <span className="text-xs text-indigo-700 font-semibold">Puedes seleccionar varios archivos</span>
+                </div>
 
-                <input
-                  type="text"
-                  required
-                  placeholder="Título de la orden (ej. Ecografía Abdominal)"
-                  value={orderTitle}
-                  onChange={(e) => setOrderTitle(e.target.value)}
-                  className="w-full p-3 text-sm rounded-xl border border-indigo-200 bg-white font-semibold"
-                />
-
-                <select
-                  value={orderType}
-                  onChange={(e) => setOrderType(e.target.value as any)}
-                  className="w-full p-3 text-sm rounded-xl border border-indigo-200 bg-white font-semibold"
-                >
-                  <option value="examen">🔬 Examen</option>
-                  <option value="especialista">👨‍⚕️ Especialista</option>
-                  <option value="laboratorio">🔬 Laboratorio</option>
-                  <option value="procedimiento">🏥 Procedimiento</option>
-                </select>
-
-                <textarea
-                  rows={2}
-                  placeholder="Descripción o indicaciones (opcional)"
-                  value={orderDescription}
-                  onChange={(e) => setOrderDescription(e.target.value)}
-                  className="w-full p-3 text-sm rounded-xl border border-indigo-200 bg-white font-medium"
-                />
-
-                {orderFile ? (
-                  <div className="p-3 bg-white border border-indigo-300 rounded-xl flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800">{orderFile.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => setOrderFile(null)}
-                      className="text-xs text-red-600 font-bold hover:underline"
-                    >
-                      Cambiar
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => orderCameraInputRef.current?.click()}
-                      className="p-3 rounded-xl bg-white border border-indigo-200 text-indigo-900 flex flex-col items-center gap-1 transition active:scale-95"
-                    >
-                      <Camera className="w-5 h-5 text-indigo-600" />
-                      <span className="font-bold text-xs">Cámara</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => orderGalleryInputRef.current?.click()}
-                      className="p-3 rounded-xl bg-white border border-indigo-200 text-indigo-900 flex flex-col items-center gap-1 transition active:scale-95"
-                    >
-                      <ImageIcon className="w-5 h-5 text-indigo-600" />
-                      <span className="font-bold text-xs">Galería</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => orderPdfInputRef.current?.click()}
-                      className="p-3 rounded-xl bg-white border border-indigo-200 text-indigo-900 flex flex-col items-center gap-1 transition active:scale-95"
-                    >
-                      <FileText className="w-5 h-5 text-indigo-600" />
-                      <span className="font-bold text-xs">PDF</span>
-                    </button>
-                  </div>
-                )}
+                {/* File Attachment Buttons */}
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => orderCameraInputRef.current?.click()}
+                    className="p-3 rounded-xl bg-white border border-indigo-200 text-indigo-900 flex flex-col items-center gap-1 transition active:scale-95 hover:border-indigo-400 shadow-sm"
+                  >
+                    <Camera className="w-5 h-5 text-indigo-600" />
+                    <span className="font-bold text-xs">Tomar Foto</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => orderGalleryInputRef.current?.click()}
+                    className="p-3 rounded-xl bg-white border border-indigo-200 text-indigo-900 flex flex-col items-center gap-1 transition active:scale-95 hover:border-indigo-400 shadow-sm"
+                  >
+                    <ImageIcon className="w-5 h-5 text-indigo-600" />
+                    <span className="font-bold text-xs">Fotos / Galería</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => orderPdfInputRef.current?.click()}
+                    className="p-3 rounded-xl bg-white border border-indigo-200 text-indigo-900 flex flex-col items-center gap-1 transition active:scale-95 hover:border-indigo-400 shadow-sm"
+                  >
+                    <FileText className="w-5 h-5 text-indigo-600" />
+                    <span className="font-bold text-xs">PDFs / Archivos</span>
+                  </button>
+                </div>
 
                 <input
                   ref={orderCameraInputRef}
@@ -417,34 +435,132 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
                   ref={orderGalleryInputRef}
                   type="file"
                   accept="image/*"
+                  multiple
                   onChange={handleOrderFileSelect}
                   className="hidden"
                 />
                 <input
                   ref={orderPdfInputRef}
                   type="file"
-                  accept="application/pdf,.pdf"
+                  accept="application/pdf,.pdf,image/*"
+                  multiple
                   onChange={handleOrderFileSelect}
                   className="hidden"
                 />
 
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowAddOrder(false)}
-                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-200 text-slate-700"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={savingOrder}
-                    className="px-4 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition disabled:opacity-50"
-                  >
-                    {savingOrder ? 'Guardando...' : 'Guardar Orden'}
-                  </button>
+                {/* Selected Files Preview List */}
+                {orderFiles.length > 0 && (
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between text-xs font-bold text-indigo-900">
+                      <span>Archivos Seleccionados ({orderFiles.length}):</span>
+                      <button
+                        type="button"
+                        onClick={() => orderGalleryInputRef.current?.click()}
+                        className="text-indigo-600 hover:underline flex items-center gap-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Agregar más</span>
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {orderFiles.map((file, idx) => (
+                        <div key={idx} className="p-2.5 bg-white border border-indigo-200 rounded-xl flex items-center justify-between text-xs font-semibold shadow-sm">
+                          <div className="flex items-center gap-2 truncate pr-2">
+                            {file.type.includes('pdf') ? (
+                              <FileText className="w-4 h-4 text-red-500 shrink-0" />
+                            ) : (
+                              <ImageIcon className="w-4 h-4 text-blue-500 shrink-0" />
+                            )}
+                            <span className="truncate text-slate-800">{file.name}</span>
+                            <span className="text-[10px] text-slate-400 shrink-0">({(file.size / 1024).toFixed(0)} KB)</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveOrderFile(idx)}
+                            className="p-1 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition"
+                            title="Remover archivo"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* AI Process Action Button */}
+                    <button
+                      type="button"
+                      onClick={handleProcessAiOrders}
+                      disabled={analyzingAi || savingOrder}
+                      className="w-full mt-2 py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-black text-xs shadow-md flex items-center justify-center gap-2 transition active:scale-95 disabled:opacity-50"
+                    >
+                      <Sparkles className="w-4 h-4 text-amber-300 animate-pulse shrink-0" />
+                      <span>
+                        {analyzingAi
+                          ? '🤖 Analizando y extrayendo órdenes con IA...'
+                          : `✨ Analizar con IA y Guardar (${orderFiles.length} archivo${orderFiles.length > 1 ? 's' : ''})`}
+                      </span>
+                    </button>
+                  </div>
+                )}
+
+                <div className="relative flex py-1 items-center">
+                  <div className="flex-grow border-t border-indigo-200"></div>
+                  <span className="flex-shrink mx-2 text-[10px] uppercase font-bold tracking-wider text-indigo-400">O ingresar manualmente</span>
+                  <div className="flex-grow border-t border-indigo-200"></div>
                 </div>
-              </form>
+
+                {/* Form inputs for Manual creation */}
+                <form onSubmit={handleAddOrder} className="space-y-3">
+                  <input
+                    type="text"
+                    required={orderFiles.length === 0}
+                    placeholder="Título de la orden (ej. Ecografía Abdominal, Cardiología)"
+                    value={orderTitle}
+                    onChange={(e) => setOrderTitle(e.target.value)}
+                    className="w-full p-3 text-sm rounded-xl border border-indigo-200 bg-white font-semibold"
+                  />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <select
+                      value={orderType}
+                      onChange={(e) => setOrderType(e.target.value as any)}
+                      className="w-full p-3 text-sm rounded-xl border border-indigo-200 bg-white font-semibold"
+                    >
+                      <option value="examen">🔬 Examen</option>
+                      <option value="especialista">👨‍⚕️ Especialista</option>
+                      <option value="laboratorio">🔬 Laboratorio</option>
+                      <option value="procedimiento">🏥 Procedimiento</option>
+                    </select>
+
+                    <button
+                      type="submit"
+                      disabled={savingOrder || analyzingAi}
+                      className="w-full p-3 rounded-xl text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white transition shadow-sm disabled:opacity-50"
+                    >
+                      {savingOrder ? 'Guardando...' : 'Guardar Manualmente'}
+                    </button>
+                  </div>
+
+                  <textarea
+                    rows={2}
+                    placeholder="Descripción o indicaciones (opcional)"
+                    value={orderDescription}
+                    onChange={(e) => setOrderDescription(e.target.value)}
+                    className="w-full p-3 text-sm rounded-xl border border-indigo-200 bg-white font-medium"
+                  />
+
+                  <div className="flex items-center justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddOrder(false)}
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 transition"
+                    >
+                      Cerrar Formulario
+                    </button>
+                  </div>
+                </form>
+              </div>
             )}
 
             {/* List of Attached Orders */}
