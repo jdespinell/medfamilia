@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { apiRequest, getFileUrl } from '../api';
 import { Appointment, ExamResult, MedicalOrder } from '../types';
+import { OrderConfirmationModal, DraftOrder } from './OrderConfirmationModal';
 
 interface AppointmentDetailModalProps {
   appointment: Appointment;
@@ -62,6 +63,11 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   const [savingOrder, setSavingOrder] = useState(false);
   const [analyzingAi, setAnalyzingAi] = useState(false);
   const [aiNoticeMessage, setAiNoticeMessage] = useState('');
+
+  // Confirmation Modal State
+  const [draftOrdersForReview, setDraftOrdersForReview] = useState<DraftOrder[]>([]);
+  const [showOrderConfirmModal, setShowOrderConfirmModal] = useState(false);
+  const [savingConfirmedOrders, setSavingConfirmedOrders] = useState(false);
 
   // Upload results modal state inside detail view
   const [showUploadResult, setShowUploadResult] = useState(false);
@@ -152,22 +158,45 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
       formData.append('appointment_id', appointment.id);
       formData.append('patient_id', appointment.patient_id);
 
-      const res = await apiRequest('/medical-orders/ai-batch', {
+      const res = await apiRequest('/medical-orders/ai-analyze-draft', {
         method: 'POST',
         body: formData,
+      });
+
+      if (res.draft_orders && Array.isArray(res.draft_orders) && res.draft_orders.length > 0) {
+        setDraftOrdersForReview(res.draft_orders);
+        setShowOrderConfirmModal(true);
+      } else {
+        alert('No se pudieron extraer órdenes del archivo.');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error procesando órdenes médicas con IA.');
+    } finally {
+      setAnalyzingAi(false);
+    }
+  };
+
+  const handleConfirmDraftOrders = async (confirmedOrders: DraftOrder[]) => {
+    setSavingConfirmedOrders(true);
+    try {
+      const res = await apiRequest('/medical-orders/confirm-batch', {
+        method: 'POST',
+        body: JSON.stringify({ orders: confirmedOrders }),
       });
 
       if (res.orders && Array.isArray(res.orders)) {
         setMedicalOrders((prev) => [...res.orders, ...prev]);
       }
-      setAiNoticeMessage(res.message || `Se procesaron ${orderFiles.length} archivo(s) y se registraron las órdenes médicas pendientes de agendar.`);
+      setAiNoticeMessage(res.message || `Se confirmaron y guardaron ${confirmedOrders.length} orden(es) médica(s) pendientes de agendar.`);
+      setShowOrderConfirmModal(false);
+      setDraftOrdersForReview([]);
       setOrderFiles([]);
       setShowAddOrder(false);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Error procesando órdenes médicas con IA.');
+      alert(err.message || 'Error guardando órdenes médicas confirmadas.');
     } finally {
-      setAnalyzingAi(false);
+      setSavingConfirmedOrders(false);
     }
   };
 
@@ -809,6 +838,18 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Order Confirmation Modal for AI Drafts */}
+        <OrderConfirmationModal
+          isOpen={showOrderConfirmModal}
+          draftOrders={draftOrdersForReview}
+          onConfirm={handleConfirmDraftOrders}
+          onCancel={() => {
+            setShowOrderConfirmModal(false);
+            setDraftOrdersForReview([]);
+          }}
+          isSaving={savingConfirmedOrders}
+        />
       </div>
     </div>
   );

@@ -164,6 +164,147 @@ router.post('/ai-batch', aiRateLimiter, secureUpload.array('files', 10), async (
   }
 });
 
+// POST /ai-analyze-draft - Extract draft orders with AI for user confirmation BEFORE saving
+router.post('/ai-analyze-draft', aiRateLimiter, secureUpload.array('files', 10), async (req: AuthRequest, res) => {
+  try {
+    const familyId = req.family!.id;
+    const { appointment_id, patient_id } = req.body;
+
+    if (!appointment_id || typeof appointment_id !== 'string' || !patient_id || typeof patient_id !== 'string') {
+      return res.status(400).json({ error: 'Paciente y cita son requeridos.' });
+    }
+
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (files.length === 0) {
+      return res.status(400).json({ error: 'Debe adjuntar al menos un archivo para analizar con IA.' });
+    }
+
+    // Verify patient ownership
+    const patient = db.prepare('SELECT id, name FROM patients WHERE id = ? AND family_id = ?').get(patient_id, familyId) as any;
+    if (!patient) {
+      return res.status(403).json({ error: 'El paciente no pertenece a su grupo familiar.' });
+    }
+
+    // Verify appointment ownership
+    const appt = db.prepare('SELECT id, title FROM appointments WHERE id = ? AND family_id = ?').get(appointment_id, familyId) as any;
+    if (!appt) {
+      return res.status(403).json({ error: 'La cita asociada no pertenece a su grupo familiar.' });
+    }
+
+    const draftOrders: any[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const filePath = file.path;
+      const mimeType = file.mimetype;
+      const safeFilename = path.basename(file.filename);
+      const fileUrl = `/api/uploads/${safeFilename}`;
+      const fileType = mimeType.includes('pdf') ? 'pdf' : 'image';
+
+      let extracted: any[] = [];
+      try {
+        extracted = await extractMedicalOrdersFromFile(filePath, mimeType);
+      } catch (aiErr) {
+        console.error('Error extrayendo borrador de orden con Gemini:', aiErr);
+      }
+
+      if (!extracted || extracted.length === 0) {
+        extracted = [{
+          title: `Orden Médica ${files.length > 1 ? `#${i + 1}` : ''}`,
+          order_type: 'examen',
+          description: 'Documento adjuntado pendiente de agendar/efectuar.'
+        }];
+      }
+
+      for (const item of extracted) {
+        const tempId = uuidv4();
+        const cleanTitle = item.title ? String(item.title).trim() : `Orden Médica ${i + 1}`;
+        const cleanType = ['examen', 'especialista', 'laboratorio', 'procedimiento'].includes(item.order_type) ? item.order_type : 'examen';
+        const cleanDesc = item.description ? String(item.description).trim() : '';
+
+        draftOrders.push({
+          temp_id: tempId,
+          appointment_id,
+          patient_id,
+          patient_name: patient.name,
+          order_type: cleanType,
+          title: cleanTitle,
+          description: cleanDesc,
+          file_url: fileUrl,
+          file_type: fileType,
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      draft_orders: draftOrders,
+    });
+  } catch (error: any) {
+    console.error('Error analizando borradores de órdenes con IA:', error);
+    return res.status(500).json({ error: error?.message || 'Error analizando los archivos con Inteligencia Artificial.' });
+  }
+});
+
+// POST /confirm-batch - Save user-confirmed orders after review
+router.post('/confirm-batch', (req: AuthRequest, res) => {
+  try {
+    const familyId = req.family!.id;
+    const { orders } = req.body;
+
+    if (!Array.isArray(orders) || orders.length === 0) {
+      return res.status(400).json({ error: 'No se recibieron órdenes para confirmar.' });
+    }
+
+    const createdOrders: any[] = [];
+
+    for (const item of orders) {
+      const { appointment_id, patient_id, order_type, title, description, file_url, file_type } = item;
+
+      if (!appointment_id || !patient_id || !title) continue;
+
+      // Verify ownership
+      const patient = db.prepare('SELECT id FROM patients WHERE id = ? AND family_id = ?').get(patient_id, familyId);
+      if (!patient) continue;
+
+      const appt = db.prepare('SELECT id FROM appointments WHERE id = ? AND family_id = ?').get(appointment_id, familyId);
+      if (!appt) continue;
+
+      const id = uuidv4();
+      const cleanTitle = String(title).trim();
+      const cleanType = ['examen', 'especialista', 'laboratorio', 'procedimiento'].includes(order_type) ? order_type : 'examen';
+      const cleanDesc = description ? String(description).trim() : null;
+
+      db.prepare(`
+        INSERT INTO medical_orders (id, family_id, appointment_id, patient_id, order_type, title, description, file_url, file_type, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')
+      `).run([
+        id,
+        familyId,
+        appointment_id,
+        patient_id,
+        cleanType,
+        cleanTitle,
+        cleanDesc,
+        file_url || null,
+        file_type || null
+      ]);
+
+      const order = db.prepare('SELECT mo.*, p.name as patient_name FROM medical_orders mo JOIN patients p ON mo.patient_id = p.id WHERE mo.id = ? AND mo.family_id = ?').get(id, familyId);
+      createdOrders.push(order);
+    }
+
+    return res.json({
+      success: true,
+      orders: createdOrders,
+      message: `Se confirmaron y guardaron ${createdOrders.length} orden(es) médica(s) pendientes de agendar.`
+    });
+  } catch (error: any) {
+    console.error('Error confirmando órdenes médicas:', error);
+    return res.status(500).json({ error: 'Error guardando las órdenes médicas confirmadas.' });
+  }
+});
+
 // POST / - Create order (manual or with files)
 router.post('/', secureUpload.array('files', 10), (req: AuthRequest, res) => {
   try {

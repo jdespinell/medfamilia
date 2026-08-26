@@ -6,6 +6,7 @@ import { Patient, Appointment, Specialty, MedicalOrder } from '../types';
 interface AppointmentModalProps {
   patients: Patient[];
   appointmentToEdit?: Appointment | null;
+  initialOrder?: MedicalOrder | null;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -13,10 +14,11 @@ interface AppointmentModalProps {
 export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   patients,
   appointmentToEdit,
+  initialOrder,
   onClose,
   onSaved,
 }) => {
-  const [tab, setTab] = useState<'photo' | 'text' | 'manual'>(appointmentToEdit ? 'manual' : 'photo');
+  const [tab, setTab] = useState<'photo' | 'text' | 'manual'>(appointmentToEdit || initialOrder ? 'manual' : 'photo');
   const [loadingAi, setLoadingAi] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -38,8 +40,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [freeText, setFreeText] = useState('');
 
   // Form Fields (Extracted or Manual)
-  const [patientId, setPatientId] = useState(appointmentToEdit?.patient_id || patients[0]?.id || '');
-  const [title, setTitle] = useState(appointmentToEdit?.title || '');
+  const [patientId, setPatientId] = useState(appointmentToEdit?.patient_id || initialOrder?.patient_id || patients[0]?.id || '');
+  const [title, setTitle] = useState(appointmentToEdit?.title || initialOrder?.title || '');
   const [appointmentType, setAppointmentType] = useState<Appointment['appointment_type']>(appointmentToEdit?.appointment_type || 'consulta');
   const [specialist, setSpecialist] = useState(appointmentToEdit?.specialist || '');
   const [specialty, setSpecialty] = useState(appointmentToEdit?.specialty || '');
@@ -50,16 +52,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       : new Date().toISOString().substring(0, 16)
   );
   const [requiresFasting, setRequiresFasting] = useState(Boolean(appointmentToEdit?.requires_fasting));
-  const [prepInstructions, setPrepInstructions] = useState(appointmentToEdit?.prep_instructions || '');
+  const [prepInstructions, setPrepInstructions] = useState(appointmentToEdit?.prep_instructions || initialOrder?.description || '');
   const [photoUrl, setPhotoUrl] = useState(appointmentToEdit?.photo_url || '');
   const [doctorNotes, setDoctorNotes] = useState(appointmentToEdit?.doctor_notes || '');
 
   // Step 2 Verification Modal flag
-  const [isVerified, setIsVerified] = useState(Boolean(appointmentToEdit));
+  const [isVerified, setIsVerified] = useState(Boolean(appointmentToEdit || initialOrder));
 
   // Pending Orders
   const [pendingOrders, setPendingOrders] = useState<MedicalOrder[]>([]);
-  const [originOrderId, setOriginOrderId] = useState<string>('');
+  const [originOrderId, setOriginOrderId] = useState<string>(initialOrder?.id || '');
 
   useEffect(() => {
     apiRequest('/specialties')

@@ -20,10 +20,15 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
-  MessageSquare
+  MessageSquare,
+  CalendarClock,
+  ClipboardList,
+  Trash2,
+  ExternalLink,
+  Sparkles
 } from 'lucide-react';
 import { apiRequest, removeToken } from '../api';
-import { Family, Patient, Appointment, Specialty } from '../types';
+import { Family, Patient, Appointment, Specialty, MedicalOrder } from '../types';
 import { AppointmentModal } from '../components/AppointmentModal';
 import { PatientsModal } from '../components/PatientsModal';
 import { AppointmentDetailModal } from '../components/AppointmentDetailModal';
@@ -40,10 +45,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   const [selectedPatientId, setSelectedPatientId] = useState<string>('all');
   const [selectedSpecialty, setSelectedSpecialty] = useState<string>('all');
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<MedicalOrder[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // View modes: list or calendar
-  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  // Active Tab for Bottom Navigation Bar
+  const [activeTab, setActiveTab] = useState<'upcoming' | 'calendar' | 'pending_orders'>('upcoming');
 
   // Past appointments accordion toggle
   const [showPastAppointments, setShowPastAppointments] = useState(false);
@@ -54,6 +60,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   // Modals
   const [showAppointmentModal, setShowAppointmentModal] = useState(false);
   const [appointmentToEdit, setAppointmentToEdit] = useState<Appointment | null>(null);
+  const [initialOrderToSchedule, setInitialOrderToSchedule] = useState<MedicalOrder | null>(null);
   const [selectedAppointmentForDetail, setSelectedAppointmentForDetail] = useState<Appointment | null>(null);
   const [showPatientsModal, setShowPatientsModal] = useState(false);
   const [showWhatsAppNumbersModal, setShowWhatsAppNumbersModal] = useState(false);
@@ -70,13 +77,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [patientsRes, appointmentsRes] = await Promise.all([
+      const [patientsRes, appointmentsRes, pendingOrdersRes] = await Promise.all([
         apiRequest('/patients'),
         apiRequest(`/appointments?patient_id=${selectedPatientId}&specialty=${selectedSpecialty}`),
+        apiRequest(`/medical-orders/pending?patient_id=${selectedPatientId}`),
       ]);
 
       setPatients(patientsRes);
       setAppointments(appointmentsRes);
+      setPendingOrders(pendingOrdersRes);
 
       // Keep selected detail appointment up to date if open
       if (selectedAppointmentForDetail) {
@@ -435,30 +444,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
           </select>
         </div>
 
-        {/* View Selector Tabs (Simplified to 2 tabs) */}
-        <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-200/70 rounded-2xl">
-          <button
-            onClick={() => setViewMode('list')}
-            className={`py-3 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2 transition ${
-              viewMode === 'list' ? 'bg-white text-blue-600 shadow-md' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <ListFilter className="w-4 h-4" />
-            <span>Próximas Citas ({upcomingAppointments.length})</span>
-          </button>
-          <button
-            onClick={() => setViewMode('calendar')}
-            className={`py-3 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2 transition ${
-              viewMode === 'calendar' ? 'bg-white text-blue-600 shadow-md' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <CalendarIcon className="w-4 h-4" />
-            <span>Calendario</span>
-          </button>
-        </div>
-
         {/* CONTENT VIEW 1: UPCOMING APPOINTMENTS & HISTORIAL */}
-        {viewMode === 'list' && (
+        {activeTab === 'upcoming' && (
           <div className="space-y-6">
             {loading ? (
               <div className="p-8 text-center text-slate-500 font-bold">Cargando citas...</div>
@@ -518,7 +505,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
         )}
 
         {/* CONTENT VIEW 2: CALENDAR VIEW */}
-        {viewMode === 'calendar' && (
+        {activeTab === 'calendar' && (
           <div className="bg-white rounded-3xl border border-slate-200 p-4 shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b pb-3">
               <h2 className="text-lg font-black text-slate-900 capitalize">
@@ -575,20 +562,189 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
             </div>
           </div>
         )}
+
+        {/* CONTENT VIEW 3: DEDICATED PENDING MEDICAL ORDERS TAB */}
+        {activeTab === 'pending_orders' && (
+          <div className="space-y-6 pb-20">
+            <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-1">
+              <h2 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                <ClipboardList className="w-6 h-6 text-indigo-600" />
+                <span>Órdenes Médicas Pendientes</span>
+              </h2>
+              <p className="text-xs font-semibold text-slate-500">
+                Órdenes o remisiones generadas en consultas anteriores que aún no han sido agendadas.
+              </p>
+            </div>
+
+            {pendingOrders.length === 0 ? (
+              <div className="p-12 text-center bg-white rounded-3xl border-2 border-dashed border-slate-200 space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto">
+                  <ClipboardList className="w-6 h-6" />
+                </div>
+                <h3 className="font-black text-slate-800 text-lg">No hay órdenes médicas pendientes</h3>
+                <p className="text-xs font-medium text-slate-500 max-w-sm mx-auto">
+                  Cuando una consulta genere órdenes de exámenes o especialista, aparecerán aquí para que hagas acompañamiento y las agendes fácilmente.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {pendingOrders.map((order) => {
+                  let icon = '🔬';
+                  let typeLabel = 'Examen';
+                  if (order.order_type === 'especialista') {
+                    icon = '👨‍⚕️';
+                    typeLabel = 'Especialista';
+                  } else if (order.order_type === 'laboratorio') {
+                    icon = '🔬';
+                    typeLabel = 'Laboratorio';
+                  } else if (order.order_type === 'procedimiento') {
+                    icon = '🏥';
+                    typeLabel = 'Procedimiento';
+                  }
+
+                  return (
+                    <div
+                      key={order.id}
+                      className="p-5 bg-white rounded-3xl border-2 border-indigo-100 shadow-sm hover:shadow-md transition space-y-3 flex flex-col justify-between"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-900 font-bold text-xs flex items-center gap-1.5 border border-indigo-100">
+                            <span>{icon}</span>
+                            <span>{typeLabel}</span>
+                          </span>
+                          <span className="px-2.5 py-0.5 rounded-md bg-amber-100 text-amber-900 text-xs font-black">
+                            ⏳ Pendiente de agendar
+                          </span>
+                        </div>
+
+                        <h3 className="text-base font-black text-slate-900">{order.title}</h3>
+
+                        {order.patient_name && (
+                          <p className="text-xs font-bold text-slate-600">
+                            👤 Paciente: <span className="text-indigo-900">{order.patient_name}</span>
+                          </p>
+                        )}
+
+                        {order.source_appointment_title && (
+                          <p className="text-xs font-semibold text-slate-500">
+                            📌 Cita origen: <span className="font-bold text-slate-700">{order.source_appointment_title}</span>
+                          </p>
+                        )}
+
+                        {order.description && (
+                          <p className="text-xs font-medium text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                            {order.description}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                        {order.file_url ? (
+                          <a
+                            href={order.file_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 transition"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>Ver Orden</span>
+                          </a>
+                        ) : (
+                          <div></div>
+                        )}
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={async () => {
+                              if (window.confirm('¿Deseas eliminar esta orden médica pendiente?')) {
+                                await apiRequest(`/medical-orders/${order.id}`, { method: 'DELETE' });
+                                fetchData();
+                              }
+                            }}
+                            className="p-2 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                            title="Eliminar orden"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setInitialOrderToSchedule(order);
+                              setAppointmentToEdit(null);
+                              setShowAppointmentModal(true);
+                            }}
+                            className="py-2 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-black shadow-md flex items-center gap-1.5 transition"
+                          >
+                            <CalendarIcon className="w-3.5 h-3.5" />
+                            <span>Agendar Cita</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       {/* Floating Action Button (FAB) for New Appointment */}
-      <div className="fixed bottom-6 right-6 z-40">
+      <div className="fixed bottom-20 right-6 z-40">
         <button
           onClick={() => {
             setAppointmentToEdit(null);
+            setInitialOrderToSchedule(null);
             setShowAppointmentModal(true);
           }}
-          className="py-4 px-6 rounded-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-base shadow-2xl shadow-blue-600/50 flex items-center gap-2 transition"
+          className="py-3.5 px-5 rounded-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-sm shadow-2xl shadow-blue-600/50 flex items-center gap-2 transition"
         >
-          <Plus className="w-6 h-6" />
+          <Plus className="w-5 h-5" />
           <span>Nueva Cita</span>
         </button>
+      </div>
+
+      {/* FIXED BOTTOM NAVIGATION BAR */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-2xl py-2 px-4">
+        <div className="max-w-md mx-auto flex items-center justify-around">
+          <button
+            onClick={() => setActiveTab('upcoming')}
+            className={`flex flex-col items-center gap-1 py-1 px-4 rounded-2xl transition ${
+              activeTab === 'upcoming' ? 'text-blue-600 font-black scale-105' : 'text-slate-500 hover:text-slate-800 font-bold'
+            }`}
+          >
+            <CalendarClock className="w-5 h-5" />
+            <span className="text-[10px] tracking-tight">Próximas Citas</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('calendar')}
+            className={`flex flex-col items-center gap-1 py-1 px-4 rounded-2xl transition ${
+              activeTab === 'calendar' ? 'text-blue-600 font-black scale-105' : 'text-slate-500 hover:text-slate-800 font-bold'
+            }`}
+          >
+            <CalendarIcon className="w-5 h-5" />
+            <span className="text-[10px] tracking-tight">Calendario</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('pending_orders')}
+            className={`flex flex-col items-center gap-1 py-1 px-4 rounded-2xl transition relative ${
+              activeTab === 'pending_orders' ? 'text-indigo-600 font-black scale-105' : 'text-slate-500 hover:text-slate-800 font-bold'
+            }`}
+          >
+            <div className="relative">
+              <ClipboardList className="w-5 h-5" />
+              {pendingOrders.length > 0 && (
+                <span className="absolute -top-1.5 -right-2.5 px-1.5 py-0.2 rounded-full bg-amber-500 text-white font-black text-[9px] min-w-[16px] text-center shadow-sm animate-pulse">
+                  {pendingOrders.length}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] tracking-tight">Órdenes Pendientes</span>
+          </button>
+        </div>
       </div>
 
       {/* Modals */}
@@ -600,6 +756,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
           onEdit={(appToEdit) => {
             setSelectedAppointmentForDetail(null);
             setAppointmentToEdit(appToEdit);
+            setInitialOrderToSchedule(null);
             setShowAppointmentModal(true);
           }}
         />
@@ -609,9 +766,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
         <AppointmentModal
           patients={patients}
           appointmentToEdit={appointmentToEdit}
+          initialOrder={initialOrderToSchedule}
           onClose={() => {
             setShowAppointmentModal(false);
             setAppointmentToEdit(null);
+            setInitialOrderToSchedule(null);
           }}
           onSaved={fetchData}
         />
