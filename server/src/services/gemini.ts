@@ -353,12 +353,32 @@ Si es para responder a la consulta/exámenes/citas en texto:
     const response = await ai.models.generateContent({
       model: model,
       contents: requestContents,
+      config: {
+        responseMimeType: 'application/json',
+      },
     });
 
     const responseText = response.text || '';
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    const cleanJson = jsonMatch ? jsonMatch[0] : responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(cleanJson);
+    try {
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      const cleanJson = jsonMatch ? jsonMatch[0] : responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(cleanJson);
+    } catch (parseErr) {
+      console.warn(`[Gemini JSON Parse Warning] Fallo parseando JSON de asistente, aplicando fallback seguro:`, parseErr);
+      if (mediaAttachments && mediaAttachments.length > 0) {
+        return {
+          intent: 'upload_exam_result',
+          patientId: familyContext.patients[0]?.id,
+          patientName: familyContext.patients[0]?.name || 'Familiar',
+          examData: { title: 'Resultado de Examen' },
+          answerText: '✅ He recibido y procesado tus documentos/imágenes médicos.'
+        };
+      }
+      return {
+        intent: 'general_answer',
+        answerText: responseText || 'Recibí tu consulta médica. ¿En qué más te puedo colaborar?'
+      };
+    }
   } catch (err: any) {
     console.error(`Error procesando asistente de IA con Gemini [${model}]:`, err);
     throw err;

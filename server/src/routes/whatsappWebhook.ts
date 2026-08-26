@@ -712,6 +712,15 @@ async function processBatchedMessages(phone: string) {
       recentExams
     }, mediaAttachments);
 
+    // Auto-adjust intent if media attachments are present but intent came back as general_answer
+    if (mediaAttachments.length > 0 && (aiResult.intent === 'general_answer' || !aiResult.intent)) {
+      console.log(`[${getLocalTimestamp()}] 🔄 [Ajuste Intent] Se recibieron ${mediaAttachments.length} archivo(s), ajustando intent a 'upload_exam_result'`);
+      aiResult.intent = 'upload_exam_result';
+      if (!aiResult.examData) {
+        aiResult.examData = { title: 'Resultado de Examen' };
+      }
+    }
+
     // 1. INTENT: CREAR NUEVA CITA
     if (aiResult.intent === 'appointment' && aiResult.appointmentData) {
       const extracted = aiResult.appointmentData;
