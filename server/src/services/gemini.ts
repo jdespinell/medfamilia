@@ -337,7 +337,9 @@ Si es para responder a la consulta/exámenes/citas en texto:
     const requestContents: any[] = [];
     
     if (mediaAttachments && mediaAttachments.length > 0) {
-      for (const attachment of mediaAttachments) {
+      // Pass at most 2 media attachments to Gemini for intent classification to prevent >20MB payload overflow
+      const sampleAttachments = mediaAttachments.slice(0, 2);
+      for (const attachment of sampleAttachments) {
         const cleanBase64 = attachment.base64.replace(/^data:[^;]+;base64,/, '');
         requestContents.push({
           inlineData: {
