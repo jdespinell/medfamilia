@@ -142,7 +142,7 @@ export function initDatabase() {
     CREATE TABLE IF NOT EXISTS medical_orders (
       id TEXT PRIMARY KEY,
       family_id TEXT NOT NULL,
-      appointment_id TEXT NOT NULL,
+      appointment_id TEXT,
       patient_id TEXT NOT NULL,
       order_type TEXT NOT NULL DEFAULT 'examen',
       title TEXT NOT NULL,
@@ -160,6 +160,42 @@ export function initDatabase() {
   `);
 
   // Safe migrations for existing SQLite installations
+  try {
+    const pragma = db.prepare("PRAGMA table_info(medical_orders)").all() as any[];
+    const apptCol = pragma.find((c: any) => c.name === 'appointment_id');
+    if (apptCol && apptCol.notnull === 1) {
+      db.exec(`
+        PRAGMA foreign_keys=OFF;
+        BEGIN TRANSACTION;
+        CREATE TABLE medical_orders_new (
+          id TEXT PRIMARY KEY,
+          family_id TEXT NOT NULL,
+          appointment_id TEXT,
+          patient_id TEXT NOT NULL,
+          order_type TEXT NOT NULL DEFAULT 'examen',
+          title TEXT NOT NULL,
+          description TEXT,
+          file_url TEXT,
+          file_type TEXT,
+          status TEXT NOT NULL DEFAULT 'pendiente',
+          linked_appointment_id TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE,
+          FOREIGN KEY (appointment_id) REFERENCES appointments (id) ON DELETE CASCADE,
+          FOREIGN KEY (patient_id) REFERENCES patients (id) ON DELETE CASCADE,
+          FOREIGN KEY (linked_appointment_id) REFERENCES appointments (id) ON DELETE SET NULL
+        );
+        INSERT INTO medical_orders_new SELECT * FROM medical_orders;
+        DROP TABLE medical_orders;
+        ALTER TABLE medical_orders_new RENAME TO medical_orders;
+        COMMIT;
+        PRAGMA foreign_keys=ON;
+      `);
+    }
+  } catch (e) {
+    console.error('Error en migración medical_orders:', e);
+  }
+
   try { db.exec('ALTER TABLE appointments ADD COLUMN origin_order_id TEXT;'); } catch (e) {}
   try { db.exec('ALTER TABLE appointments ADD COLUMN doctor_notes TEXT;'); } catch (e) {}
   try { db.exec('ALTER TABLE families ADD COLUMN phone_number TEXT;'); } catch (e) {}

@@ -55,7 +55,7 @@ router.get('/pending', (req: AuthRequest, res) => {
       SELECT mo.*, p.name as patient_name, a.title as source_appointment_title
       FROM medical_orders mo
       JOIN patients p ON mo.patient_id = p.id
-      JOIN appointments a ON mo.appointment_id = a.id
+      LEFT JOIN appointments a ON mo.appointment_id = a.id
       WHERE mo.family_id = ? AND p.family_id = ? AND mo.status = 'pendiente'
     `;
     const params: any[] = [familyId, familyId];
