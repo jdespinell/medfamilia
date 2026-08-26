@@ -13,6 +13,46 @@ function getModelName(): string {
   return process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 }
 
+const FALLBACK_MODELS = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
+
+async function generateContentWithRetry(params: {
+  contents: any;
+  config?: any;
+}) {
+  const ai = getAiInstance();
+  const primaryModel = getModelName();
+  const candidateModels = [primaryModel, ...FALLBACK_MODELS.filter(m => m !== primaryModel)];
+
+  let lastError: any = null;
+
+  for (const modelCandidate of candidateModels) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelCandidate,
+          contents: params.contents,
+          config: params.config,
+        });
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        const errMessage = String(err?.message || err?.error?.message || '');
+        const errStatus = err?.status || err?.code || err?.error?.code;
+        const isTransient = errStatus === 503 || errStatus === 429 || errMessage.includes('high demand') || errMessage.includes('UNAVAILABLE') || errMessage.includes('OVERLOADED');
+
+        if (isTransient) {
+          console.warn(`⚠️ [Gemini 503/429] Modelo [${modelCandidate}] con alta demanda/indisponible (intento ${attempt}/2). Reintentando...`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        } else {
+          break;
+        }
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 export interface ExtractedAppointmentData {
   title: string;
   appointment_type: 'consulta' | 'examen' | 'laboratorio' | 'procedimiento';
@@ -28,7 +68,6 @@ export interface ExtractedAppointmentData {
  * Extracts structured medical appointment details from text using Gemini API
  */
 export async function extractAppointmentFromText(text: string): Promise<ExtractedAppointmentData> {
-  const ai = getAiInstance();
   const model = getModelName();
 
   const prompt = `
@@ -49,8 +88,7 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
 `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: model,
+    const response = await generateContentWithRetry({
       contents: prompt,
     });
 
@@ -68,7 +106,6 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
  * Extracts structured medical appointment details from an image or PDF file using Gemini Vision/Document API
  */
 export async function extractAppointmentFromFile(filePath: string, mimeType: string): Promise<ExtractedAppointmentData> {
-  const ai = getAiInstance();
   const model = getModelName();
   const fileBuffer = fs.readFileSync(filePath);
   const base64Data = fileBuffer.toString('base64');
@@ -92,8 +129,7 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con la siguiente estructura (sin 
 `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: model,
+    const response = await generateContentWithRetry({
       contents: [
         {
           inlineData: {
@@ -128,7 +164,6 @@ export interface ExtractedMedicalOrder {
  * Extracts list of medical orders prescribed in an image or PDF file using Gemini Vision/Document API
  */
 export async function extractMedicalOrdersFromFile(filePath: string, mimeType: string): Promise<ExtractedMedicalOrder[]> {
-  const ai = getAiInstance();
   const model = getModelName();
   const fileBuffer = fs.readFileSync(filePath);
   const base64Data = fileBuffer.toString('base64');
@@ -157,8 +192,7 @@ Devuelve EXCLUSIVAMENTE un arreglo JSON válido de objetos con la siguiente estr
 `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: model,
+    const response = await generateContentWithRetry({
       contents: [
         {
           inlineData: {
@@ -202,7 +236,6 @@ Devuelve EXCLUSIVAMENTE un arreglo JSON válido de objetos con la siguiente estr
  * Summarizes medical exam results (PDF or Image) into senior-friendly clear Spanish.
  */
 export async function summarizeExamResult(filePath: string, mimeType: string): Promise<string> {
-  const ai = getAiInstance();
   const model = getModelName();
   const fileBuffer = fs.readFileSync(filePath);
   const base64Data = fileBuffer.toString('base64');
@@ -222,8 +255,7 @@ Mantén un tono tranquilizador, informativo y respetuoso.
 `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: model,
+    const response = await generateContentWithRetry({
       contents: [
         {
           inlineData: {
@@ -272,7 +304,6 @@ export async function processMedicalAssistantQuery(
     title: string;
   };
 }> {
-  const ai = getAiInstance();
   const model = getModelName();
 
   const prompt = `
@@ -376,8 +407,7 @@ Si es para responder a la consulta/exámenes/citas en texto:
     
     requestContents.push({ text: prompt });
 
-    const response = await ai.models.generateContent({
-      model: model,
+    const response = await generateContentWithRetry({
       contents: requestContents,
       config: {
         responseMimeType: 'application/json',
@@ -435,8 +465,8 @@ export async function classifyAndProcessMedicalDocument(
     patients: Array<{ id: string; name: string }>;
   }
 ): Promise<ClassifiedDocument> {
-  const ai = getAiInstance();
   const model = getModelName();
+  const cleanBase64 = base64Data.replace(/^data:[^;]+;base64,/, '');
 
   const prompt = `
 Eres un experto analizando documentos médicos.
@@ -468,12 +498,11 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con esta estructura:
 `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: model,
+    const response = await generateContentWithRetry({
       contents: [
         {
           inlineData: {
-            data: base64Data,
+            data: cleanBase64,
             mimeType: mimeType === 'application/pdf' ? 'application/pdf' : (mimeType || 'image/jpeg')
           }
         },
@@ -490,4 +519,3 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con esta estructura:
     throw err;
   }
 }
-
