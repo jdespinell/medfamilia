@@ -68,13 +68,16 @@ app.use(
   })
 );
 
-// CORS configuration (Strict origin validation, no wildcard with credentials)
+// CORS configuration
 const corsOriginEnv = process.env.CORS_ORIGIN;
 const allowedOriginsList = corsOriginEnv
   ? corsOriginEnv.split(',').map((o) => o.trim()).filter(Boolean)
   : [];
 
 const isOriginAllowed = (origin: string): boolean => {
+  if (allowedOriginsList.length === 0 || allowedOriginsList.includes('*')) {
+    return true;
+  }
   if (allowedOriginsList.includes(origin)) {
     return true;
   }
@@ -92,8 +95,8 @@ const isOriginAllowed = (origin: string): boolean => {
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server) without reflecting wildcard CORS
-      if (!origin) return callback(null, false);
+      // Allow requests with no origin (e.g. mobile apps, curl, same-origin requests)
+      if (!origin) return callback(null, true);
 
       if (isOriginAllowed(origin)) {
         return callback(null, true);
