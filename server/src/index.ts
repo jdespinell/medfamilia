@@ -14,7 +14,7 @@ if (fs.existsSync(path.join(process.cwd(), '../.env'))) {
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import db, { initDatabase } from './database/db.js';
+import db, { initDatabase, isFileOwnedByFamily, cleanupOrphanedStagingFiles } from './database/db.js';
 import authRoutes from './routes/auth.js';
 import patientRoutes from './routes/patients.js';
 import appointmentRoutes from './routes/appointments.js';
@@ -33,6 +33,13 @@ import { ensureWhatsAppWebhook } from './services/whatsapp.js';
 // Initialize Database
 initDatabase();
 
+// Run initial cleanup of unlinked staging files older than 24 hours
+cleanupOrphanedStagingFiles();
+const stagingCleanupInterval = setInterval(() => {
+  cleanupOrphanedStagingFiles();
+}, 60 * 60 * 1000);
+stagingCleanupInterval.unref();
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -42,18 +49,60 @@ app.set('trust proxy', 1);
 // Security Headers with Helmet
 app.use(
   helmet({
-    contentSecurityPolicy: false, // Disabled for local PWA/CDN assets compatibility
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+        connectSrc: ["'self'", 'https://fonts.googleapis.com', 'https://fonts.gstatic.com'],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'self'"],
+        upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
+      },
+    },
     crossOriginResourcePolicy: { policy: 'same-site' },
   })
 );
 
-// CORS configuration (Restrict origin when CORS_ORIGIN is set)
-const allowedOrigins = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*';
+// CORS configuration (Strict origin validation, no wildcard with credentials)
+const corsOriginEnv = process.env.CORS_ORIGIN;
+const allowedOriginsList = corsOriginEnv
+  ? corsOriginEnv.split(',').map((o) => o.trim()).filter(Boolean)
+  : [];
+
+const isOriginAllowed = (origin: string): boolean => {
+  if (allowedOriginsList.includes(origin)) {
+    return true;
+  }
+  try {
+    const parsedUrl = new URL(origin);
+    if (parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1') {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+};
+
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server) without reflecting wildcard CORS
+      if (!origin) return callback(null, false);
+
+      if (isOriginAllowed(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error('CORS policy: Not allowed by CORS origin whitelist'), false);
+    },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-webhook-token', 'apikey'],
   })
 );
@@ -71,7 +120,7 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // Protected Uploads File Serving with Multi-Tenant Access Control & Path Traversal Prevention
-const handleSecureFileServe = (req: AuthRequest, res: express.Response) => {
+export const handleSecureFileServe = (req: AuthRequest, res: express.Response) => {
   try {
     const familyId = req.family!.id;
     const rawFilename = req.params.filename;
@@ -81,21 +130,17 @@ const handleSecureFileServe = (req: AuthRequest, res: express.Response) => {
 
     // Sanitize filename to prevent Path Traversal Attacks (../)
     const filename = path.basename(rawFilename);
-    const filePath = path.join(uploadsDir, filename);
+    const targetUploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+    const filePath = path.join(targetUploadsDir, filename);
 
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'Archivo no encontrado.' });
     }
 
-    // Multi-tenant check: verify file belongs to logged-in familyId
-    const exam = db.prepare('SELECT id FROM exam_results WHERE family_id = ? AND file_url LIKE ?').get(familyId, `%${filename}`);
-    const appt = db.prepare('SELECT id FROM appointments WHERE family_id = ? AND photo_url LIKE ?').get(familyId, `%${filename}`);
+    // Multi-tenant check: strictly verify file belongs to logged-in familyId (no temporal grace window)
+    const isOwned = isFileOwnedByFamily(familyId, filename);
 
-    // Allow temporary upload buffer for newly processed files (within 1 hour) by an authenticated family session
-    const stats = fs.statSync(filePath);
-    const isRecent = (Date.now() - stats.mtimeMs) < 60 * 60 * 1000;
-
-    if (!exam && !appt && !isRecent) {
+    if (!isOwned) {
       return res.status(403).json({ error: 'Acceso denegado. Este archivo no pertenece a su grupo familiar.' });
     }
 
@@ -106,8 +151,14 @@ const handleSecureFileServe = (req: AuthRequest, res: express.Response) => {
     if (ext === '.pdf') {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-    } else if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
-      res.setHeader('Content-Type', ext === '.png' ? 'image/png' : 'image/jpeg');
+    } else if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic'].includes(ext)) {
+      const mimeMap: Record<string, string> = {
+        '.png': 'image/png',
+        '.webp': 'image/webp',
+        '.gif': 'image/gif',
+        '.heic': 'image/heic',
+      };
+      res.setHeader('Content-Type', mimeMap[ext] || 'image/jpeg');
       res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     }
 
@@ -120,6 +171,7 @@ const handleSecureFileServe = (req: AuthRequest, res: express.Response) => {
 
 app.get('/api/uploads/:filename', authMiddleware, handleSecureFileServe);
 app.get('/uploads/:filename', authMiddleware, handleSecureFileServe);
+
 
 // API Routes with specific rate limiters
 app.use('/api/auth', authRateLimiter, authRoutes);

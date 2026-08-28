@@ -841,6 +841,7 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
 
         {/* Order Confirmation Modal for AI Drafts */}
         <OrderConfirmationModal
+          key={showOrderConfirmModal ? draftOrdersForReview.map(d => d.temp_id).join(',') : 'closed'}
           isOpen={showOrderConfirmModal}
           draftOrders={draftOrdersForReview}
           onConfirm={handleConfirmDraftOrders}

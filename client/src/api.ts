@@ -14,10 +14,38 @@ export function removeToken() {
 
 export function getFileUrl(url: string): string {
   if (!url) return '';
+  return url.split('?')[0];
+}
+
+export async function fetchFileBlob(url: string): Promise<string> {
   const token = getToken();
-  if (!token) return url;
-  const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const cleanUrl = url.split('?')[0];
+  const targetUrl = cleanUrl.startsWith('/api') || cleanUrl.startsWith('http')
+    ? cleanUrl
+    : `/api${cleanUrl.startsWith('/') ? '' : '/'}${cleanUrl}`;
+
+  const response = await fetch(targetUrl, { headers });
+  if (!response.ok) {
+    throw new Error('Error al descargar o visualizar el archivo.');
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function openProtectedFile(url: string, e?: React.MouseEvent) {
+  if (e) {
+    e.preventDefault();
+  }
+  try {
+    const blobUrl = await fetchFileBlob(url);
+    window.open(blobUrl, '_blank', 'noopener,noreferrer');
+  } catch (err: any) {
+    alert(err.message || 'No se pudo abrir el archivo.');
+  }
 }
 
 export async function apiRequest(endpoint: string, options: RequestInit = {}) {

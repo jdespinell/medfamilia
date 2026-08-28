@@ -117,6 +117,13 @@ CREATE TABLE IF NOT EXISTS medical_orders (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS upload_staging (
+  id VARCHAR(64) PRIMARY KEY,
+  family_id VARCHAR(64) NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  filename VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes for high-performance multi-tenancy querying
 CREATE INDEX IF NOT EXISTS idx_medical_orders_family ON medical_orders(family_id);
 CREATE INDEX IF NOT EXISTS idx_medical_orders_patient ON medical_orders(patient_id);
@@ -129,3 +136,6 @@ CREATE INDEX IF NOT EXISTS idx_exam_results_patient ON exam_results(patient_id);
 CREATE INDEX IF NOT EXISTS idx_push_family ON push_subscriptions(family_id);
 CREATE INDEX IF NOT EXISTS idx_wa_numbers_phone ON family_whatsapp_numbers(phone_number);
 CREATE INDEX IF NOT EXISTS idx_wa_numbers_family ON family_whatsapp_numbers(family_id);
+CREATE INDEX IF NOT EXISTS idx_upload_staging_family ON upload_staging(family_id);
+CREATE INDEX IF NOT EXISTS idx_upload_staging_filename ON upload_staging(filename);
+

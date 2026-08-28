@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sparkles, Trash2, CheckCircle2, FileText, ImageIcon, X, AlertTriangle } from 'lucide-react';
 import { MedicalOrder } from '../types';
+import { getFileUrl } from '../api';
 
 export interface DraftOrder {
   temp_id: string;
@@ -30,6 +31,12 @@ export const OrderConfirmationModal: React.FC<OrderConfirmationModalProps> = ({
   isSaving = false,
 }) => {
   const [drafts, setDrafts] = useState<DraftOrder[]>(initialDrafts);
+
+  useEffect(() => {
+    if (isOpen) {
+      setDrafts(initialDrafts);
+    }
+  }, [initialDrafts, isOpen]);
 
   if (!isOpen) return null;
 
@@ -146,7 +153,7 @@ export const OrderConfirmationModal: React.FC<OrderConfirmationModalProps> = ({
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">Archivo Adjunto:</label>
                       <a
-                        href={draft.file_url}
+                        href={getFileUrl(draft.file_url)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="p-2.5 rounded-xl bg-white border border-slate-300 flex items-center justify-between text-xs font-bold text-indigo-600 hover:underline"

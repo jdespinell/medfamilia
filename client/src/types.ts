@@ -27,6 +27,7 @@ export interface Patient {
   color: string;
   google_calendar_id?: string;
   google_refresh_token?: string;
+  is_google_connected?: boolean;
 }
 
 export interface Specialty {

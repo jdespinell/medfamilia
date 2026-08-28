@@ -1,4 +1,8 @@
 import { google } from 'googleapis';
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import { getJwtSecret } from '../middleware/auth.js';
+import { decrypt } from './encryption.js';
 
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -11,15 +15,42 @@ export function getOAuth2Client(customRedirectUri?: string) {
   return new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, redirectUri);
 }
 
-export function getAuthUrl(patientId: string, customRedirectUri?: string) {
+export function generateOAuthState(patientId: string, familyId: string): string {
+  const payload = {
+    patientId,
+    familyId,
+    nonce: crypto.randomUUID(),
+  };
+  return jwt.sign(payload, getJwtSecret(), { algorithm: 'HS256', expiresIn: '15m' });
+}
+
+export function verifyOAuthState(stateToken: string): { patientId: string; familyId: string; nonce: string } | null {
+  try {
+    const decoded = jwt.verify(stateToken, getJwtSecret(), { algorithms: ['HS256'] }) as any;
+    if (decoded && typeof decoded.patientId === 'string' && typeof decoded.familyId === 'string') {
+      return {
+        patientId: decoded.patientId,
+        familyId: decoded.familyId,
+        nonce: decoded.nonce || '',
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function getAuthUrl(patientId: string, familyId: string, customRedirectUri?: string) {
   const oauth2Client = getOAuth2Client(customRedirectUri);
   if (!oauth2Client) return null;
+
+  const state = generateOAuthState(patientId, familyId);
 
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: ['https://www.googleapis.com/auth/calendar.events'],
     prompt: 'consent',
-    state: patientId,
+    state: state,
   });
 }
 
@@ -42,7 +73,8 @@ export async function syncAppointmentToGoogleCalendar(
     return null;
   }
 
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
+  const plainRefreshToken = decrypt(refreshToken) || refreshToken;
+  oauth2Client.setCredentials({ refresh_token: plainRefreshToken });
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
   const startTime = new Date(appointment.date_time);
@@ -96,3 +128,4 @@ export async function syncAppointmentToGoogleCalendar(
     return null;
   }
 }
+

@@ -240,16 +240,16 @@ export const PatientsModal: React.FC<PatientsModalProps> = ({
                       type="button"
                       onClick={() => handleConnectGoogleCalendar(p.id)}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
-                        p.google_refresh_token
+                        p.is_google_connected
                           ? 'bg-emerald-100 text-emerald-800'
                           : 'bg-blue-100 hover:bg-blue-200 text-blue-800'
                       }`}
                     >
                       <Calendar className="w-3.5 h-3.5" />
-                      <span>{p.google_refresh_token ? 'Google Conectado ✅' : 'Conectar Google Calendar'}</span>
+                      <span>{p.is_google_connected ? 'Google Conectado ✅' : 'Conectar Google Calendar'}</span>
                     </button>
 
-                    {p.google_refresh_token && (
+                    {p.is_google_connected && (
                       <button
                         type="button"
                         onClick={() => handleSyncExistingAppointments(p.id)}

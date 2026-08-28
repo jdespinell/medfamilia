@@ -27,7 +27,7 @@ import {
   ExternalLink,
   Sparkles
 } from 'lucide-react';
-import { apiRequest, removeToken } from '../api';
+import { apiRequest, getFileUrl, removeToken } from '../api';
 import { Family, Patient, Appointment, Specialty, MedicalOrder } from '../types';
 import { AppointmentModal } from '../components/AppointmentModal';
 import { PatientsModal } from '../components/PatientsModal';
@@ -642,7 +642,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
                       <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
                         {order.file_url ? (
                           <a
-                            href={order.file_url}
+                            href={getFileUrl(order.file_url)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 transition"

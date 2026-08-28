@@ -2,14 +2,23 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import db from '../database/db.js';
 
-function getJwtSecret(): string {
+const INSECURE_JWT_DEFAULTS = [
+  'super-secret-key-medfamilia-2026',
+  'super-secret-medfamilia-key-2026',
+  'development-medfamilia-fallback-key-change-me',
+];
+
+export function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
-  if (!secret || secret.trim() === '' || secret === 'super-secret-medfamilia-key-2026') {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('CRITICAL SECURITY FATAL ERROR: JWT_SECRET must be explicitly set with a strong secret in production.');
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  if (!secret || secret.trim() === '' || INSECURE_JWT_DEFAULTS.includes(secret.trim())) {
+    if (isProduction) {
+      throw new Error('CRITICAL SECURITY FATAL ERROR: JWT_SECRET must be explicitly set with a strong, non-default secret in production.');
     }
+    return 'development-medfamilia-fallback-key-change-me';
   }
-  return secret || 'development-medfamilia-fallback-key-change-me';
+  return secret.trim();
 }
 
 export interface AuthRequest extends Request {
@@ -39,8 +48,6 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.split(' ')[1];
-  } else if (typeof req.query.token === 'string' && req.query.token.trim()) {
-    token = req.query.token.trim();
   }
 
   if (!token) {
@@ -79,8 +86,6 @@ export function adminMiddleware(req: Request, res: Response, next: NextFunction)
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.split(' ')[1];
-  } else if (typeof req.query.token === 'string' && req.query.token.trim()) {
-    token = req.query.token.trim();
   }
 
   if (!token) {

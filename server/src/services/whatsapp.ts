@@ -4,7 +4,7 @@ dotenv.config();
 
 export async function sendWhatsAppMessage(toPhone: string, text: string): Promise<boolean> {
   const evolutionApiUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
-  const evolutionApiKey = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+  const evolutionApiKey = process.env.EVOLUTION_API_KEY || '';
   const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
 
   try {
@@ -49,7 +49,7 @@ export async function sendWhatsAppMedia(
   caption?: string
 ): Promise<boolean> {
   const evolutionApiUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
-  const evolutionApiKey = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+  const evolutionApiKey = process.env.EVOLUTION_API_KEY || '';
   const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
 
   try {
@@ -93,7 +93,7 @@ export async function sendWhatsAppMedia(
 
 export async function ensureWhatsAppWebhook(): Promise<boolean> {
   const evolutionApiUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
-  const evolutionApiKey = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+  const evolutionApiKey = process.env.EVOLUTION_API_KEY || '';
   const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
 
   try {

@@ -157,6 +157,16 @@ export function initDatabase() {
       FOREIGN KEY (patient_id) REFERENCES patients (id) ON DELETE CASCADE,
       FOREIGN KEY (linked_appointment_id) REFERENCES appointments (id) ON DELETE SET NULL
     );
+    CREATE TABLE IF NOT EXISTS upload_staging (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_upload_staging_family ON upload_staging(family_id);
+    CREATE INDEX IF NOT EXISTS idx_upload_staging_filename ON upload_staging(filename);
   `);
 
   // Safe migrations for existing SQLite installations
@@ -217,4 +227,75 @@ export function initDatabase() {
   console.log('Database initialized successfully at:', dbPath);
 }
 
+export function recordStagingUpload(familyId: string, filename: string): string {
+  const id = uuidv4();
+  const safeFilename = path.basename(filename.split('?')[0]);
+  db.prepare('INSERT INTO upload_staging (id, family_id, filename) VALUES (?, ?, ?)').run(id, familyId, safeFilename);
+  return id;
+}
+
+export function isFileOwnedByFamily(familyId: string, fileUrlOrName: string): boolean {
+  if (!familyId || !fileUrlOrName || typeof fileUrlOrName !== 'string') return false;
+  const filename = path.basename(fileUrlOrName.split('?')[0]);
+  if (!filename) return false;
+
+  // 1. Check upload_staging
+  const staging = db.prepare('SELECT id FROM upload_staging WHERE family_id = ? AND filename = ?').get(familyId, filename);
+  if (staging) return true;
+
+  // 2. Check exam_results
+  const exam = db.prepare('SELECT id FROM exam_results WHERE family_id = ? AND (file_url = ? OR file_url LIKE ?)').get(familyId, fileUrlOrName, `%${filename}`);
+  if (exam) return true;
+
+  // 3. Check appointments
+  const appt = db.prepare('SELECT id FROM appointments WHERE family_id = ? AND (photo_url = ? OR photo_url LIKE ?)').get(familyId, fileUrlOrName, `%${filename}`);
+  if (appt) return true;
+
+  // 4. Check medical_orders
+  const order = db.prepare('SELECT id FROM medical_orders WHERE family_id = ? AND (file_url = ? OR file_url LIKE ?)').get(familyId, fileUrlOrName, `%${filename}`);
+  if (order) return true;
+
+  // 5. Check families (payment receipt)
+  const family = db.prepare('SELECT id FROM families WHERE id = ? AND (payment_receipt_url = ? OR payment_receipt_url LIKE ?)').get(familyId, fileUrlOrName, `%${filename}`);
+  if (family) return true;
+
+  return false;
+}
+
+export function cleanupOrphanedStagingFiles(customUploadsDir?: string): void {
+  try {
+    const targetDir = customUploadsDir || process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(targetDir)) return;
+
+    // Cutoff 24 hours ago
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const oldStaging = db.prepare('SELECT id, family_id, filename FROM upload_staging WHERE created_at < ?').all(cutoff) as any[];
+
+    for (const record of oldStaging) {
+      const filename = record.filename;
+      // Check if linked in permanent tables
+      const exam = db.prepare('SELECT id FROM exam_results WHERE file_url LIKE ?').get(`%${filename}`);
+      const appt = db.prepare('SELECT id FROM appointments WHERE photo_url LIKE ?').get(`%${filename}`);
+      const order = db.prepare('SELECT id FROM medical_orders WHERE file_url LIKE ?').get(`%${filename}`);
+      const family = db.prepare('SELECT id FROM families WHERE payment_receipt_url LIKE ?').get(`%${filename}`);
+
+      if (!exam && !appt && !order && !family) {
+        const filePath = path.join(targetDir, filename);
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (e) {
+            console.error(`Error unlinking orphaned staging file ${filename}:`, e);
+          }
+        }
+      }
+
+      db.prepare('DELETE FROM upload_staging WHERE id = ?').run(record.id);
+    }
+  } catch (err) {
+    console.error('Error in cleanupOrphanedStagingFiles:', err);
+  }
+}
+
 export default db;
+

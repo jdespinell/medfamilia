@@ -1,12 +1,15 @@
 import { Router } from 'express';
 import db from '../database/db.js';
-import { getAuthUrl, getOAuth2Client, syncAppointmentToGoogleCalendar } from '../services/googleCalendar.js';
+import { getAuthUrl, getOAuth2Client, syncAppointmentToGoogleCalendar, verifyOAuthState } from '../services/googleCalendar.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { encrypt, decrypt } from '../services/encryption.js';
+import { validateParams, validateQuery, v } from '../middleware/validation.js';
 
 const router = Router();
 
 // Helper function to sync ALL family appointments to a connected Google Calendar
 export async function syncAllFamilyAppointments(familyId: string, refreshToken: string) {
+  const plainToken = decrypt(refreshToken) || refreshToken;
   const appointments = db.prepare(`
     SELECT a.*, p.name as patient_name
     FROM appointments a
@@ -16,7 +19,7 @@ export async function syncAllFamilyAppointments(familyId: string, refreshToken: 
 
   for (const app of appointments) {
     try {
-      const eventId = await syncAppointmentToGoogleCalendar(refreshToken, app);
+      const eventId = await syncAppointmentToGoogleCalendar(plainToken, app);
       if (eventId) {
         db.prepare('UPDATE appointments SET google_event_id = ? WHERE id = ? AND family_id = ?').run([eventId, app.id, familyId]);
       }
@@ -27,58 +30,83 @@ export async function syncAllFamilyAppointments(familyId: string, refreshToken: 
 }
 
 // Get OAuth URL for a patient
-router.get('/auth-url/:patientId', authMiddleware, (req: AuthRequest, res) => {
-  const familyId = req.family!.id;
-  const { patientId } = req.params;
+router.get(
+  '/auth-url/:patientId',
+  authMiddleware,
+  validateParams({
+    patientId: v.uuid(),
+  }),
+  (req: AuthRequest, res) => {
+    const familyId = req.family!.id;
+    const { patientId } = req.params;
 
-  // Verify patient ownership by familyId
-  const patient = db.prepare('SELECT id FROM patients WHERE id = ? AND family_id = ?').get(patientId, familyId);
-  if (!patient) {
-    return res.status(404).json({ error: 'Paciente no encontrado o no pertenece a su grupo familiar.' });
+    // Verify patient ownership by familyId
+    const patient = db.prepare('SELECT id FROM patients WHERE id = ? AND family_id = ?').get(patientId, familyId);
+    if (!patient) {
+      return res.status(404).json({ error: 'Paciente no encontrado o no pertenece a su grupo familiar.' });
+    }
+
+    const host = req.get('host');
+    const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+    const dynamicRedirectUri = process.env.GOOGLE_REDIRECT_URI || `${protocol}://${host}/api/calendar/callback`;
+
+    const url = getAuthUrl(patientId, familyId, dynamicRedirectUri);
+
+    if (!url) {
+      return res.status(400).json({
+        error: 'Google OAuth no está configurado. Configure GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en las variables de entorno.',
+      });
+    }
+
+    return res.json({ url, redirectUri: dynamicRedirectUri });
   }
-
-  const host = req.get('host');
-  const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
-  const dynamicRedirectUri = process.env.GOOGLE_REDIRECT_URI || `${protocol}://${host}/api/calendar/callback`;
-
-  const url = getAuthUrl(patientId, dynamicRedirectUri);
-
-  if (!url) {
-    return res.status(400).json({
-      error: 'Google OAuth no está configurado. Configure GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en las variables de entorno.',
-    });
-  }
-
-  return res.json({ url, redirectUri: dynamicRedirectUri });
-});
+);
 
 // Manual sync trigger for all family appointments to a patient's connected Google Calendar
-router.post('/sync-patient/:patientId', authMiddleware, async (req: AuthRequest, res) => {
-  const familyId = req.family!.id;
-  const { patientId } = req.params;
+router.post(
+  '/sync-patient/:patientId',
+  authMiddleware,
+  validateParams({
+    patientId: v.uuid(),
+  }),
+  async (req: AuthRequest, res) => {
+    const familyId = req.family!.id;
+    const { patientId } = req.params;
 
-  const patient = db.prepare('SELECT * FROM patients WHERE id = ? AND family_id = ?').get(patientId, familyId) as any;
-  if (!patient || !patient.google_refresh_token) {
-    return res.status(400).json({ error: 'El familiar no tiene una cuenta de Google Calendar vinculada.' });
+    const patient = db.prepare('SELECT * FROM patients WHERE id = ? AND family_id = ?').get(patientId, familyId) as any;
+    if (!patient || !patient.google_refresh_token) {
+      return res.status(400).json({ error: 'El familiar no tiene una cuenta de Google Calendar vinculada.' });
+    }
+
+    await syncAllFamilyAppointments(familyId, patient.google_refresh_token);
+
+    return res.json({ message: 'Todas las citas familiares se han sincronizado con Google Calendar.' });
   }
-
-  await syncAllFamilyAppointments(familyId, patient.google_refresh_token);
-
-  return res.json({ message: 'Todas las citas familiares se han sincronizado con Google Calendar.' });
-});
+);
 
 // OAuth Callback handler
-router.get('/callback', async (req, res) => {
-  const { code, state } = req.query; // state is patientId
-  const patientId = typeof state === 'string' ? state : '';
+router.get(
+  '/callback',
+  validateQuery({
+    code: v.string({ min: 1, max: 2000 }),
+    state: v.string({ min: 1, max: 2000 }),
+  }),
+  async (req, res) => {
+  const { code, state } = req.query;
+  const stateToken = typeof state === 'string' ? state : '';
 
-  if (!code || typeof code !== 'string' || !patientId) {
+  if (!code || typeof code !== 'string' || !stateToken) {
     return res.status(400).send('Respuesta de autenticación de Google inválida.');
   }
 
-  const patient = db.prepare('SELECT family_id FROM patients WHERE id = ?').get(patientId) as any;
-  if (!patient) {
-    return res.status(404).send('Paciente no encontrado en el sistema.');
+  const decodedState = verifyOAuthState(stateToken);
+  if (!decodedState) {
+    return res.status(400).send('Token de estado OAuth inválido o expirado.');
+  }
+
+  const patient = db.prepare('SELECT family_id FROM patients WHERE id = ?').get(decodedState.patientId) as any;
+  if (!patient || patient.family_id !== decodedState.familyId) {
+    return res.status(400).send('Paciente no encontrado o no coincide con el grupo familiar.');
   }
 
   const host = req.get('host');
@@ -94,9 +122,10 @@ router.get('/callback', async (req, res) => {
     const { tokens } = await oauth2Client.getToken(code);
 
     if (tokens.refresh_token) {
+      const encryptedToken = encrypt(tokens.refresh_token);
       db.prepare('UPDATE patients SET google_refresh_token = ? WHERE id = ? AND family_id = ?').run([
-        tokens.refresh_token,
-        patientId,
+        encryptedToken,
+        decodedState.patientId,
         patient.family_id
       ]);
 
@@ -124,4 +153,5 @@ router.get('/callback', async (req, res) => {
 });
 
 export default router;
+
 

@@ -5,6 +5,7 @@ import path from 'path';
 import { sendWhatsAppMessage, sendWhatsAppMedia, ensureWhatsAppWebhook } from '../services/whatsapp.js';
 import { extractAppointmentFromText, processMedicalAssistantQuery, classifyAndProcessMedicalDocument, summarizeExamResult, ExtractedAppointmentData } from '../services/gemini.js';
 import { syncAppointmentToGoogleCalendar } from '../services/googleCalendar.js';
+import { adminMiddleware } from '../middleware/auth.js';
 import db from '../database/db.js';
 
 const router = Router();
@@ -31,7 +32,7 @@ const BATCH_DELAY_MS = 4000; // 4 seconds to accumulate messages
 async function downloadWhatsAppMedia(messageObj: any): Promise<{ base64: string; mimeType: string } | null> {
   try {
     const evolutionApiUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
-    const evolutionApiKey = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
+    const evolutionApiKey = process.env.EVOLUTION_API_KEY || '';
     const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
 
     const response = await fetch(
@@ -141,17 +142,11 @@ function checkAndIncrementAiUsage(familyId: string): boolean {
 }
 
 /**
- * Connection Status Route
+ * Connection Status Route (Admin Authenticated)
  */
-router.get('/status', async (req: Request, res: Response) => {
+router.get('/status', adminMiddleware, async (req: Request, res: Response) => {
   try {
-    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
-    const adminKey = req.query.key;
-
-    if (adminKey !== EVOLUTION_API_KEY) {
-      return res.status(401).json({ error: 'Acceso no autorizado.' });
-    }
-
+    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
     const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
     const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
 
@@ -184,7 +179,6 @@ router.get('/status', async (req: Request, res: Response) => {
           <h2>🩺 Estado de WhatsApp</h2>
           <div class="status ${state}">${state === 'open' ? '✅ CONECTADO Y ACTIVO' : state === 'connecting' ? '🔄 CONECTANDO...' : '🛑 DESCONECTADO'}</div>
           <p>Estado actual de la sesión: <b>${state}</b></p>
-          ${state !== 'open' ? '<a href="/api/whatsapp/pairing-code?key=' + EVOLUTION_API_KEY + '&number=573001234567" class="btn">📲 Vincular Nuevamente</a> <a href="/api/whatsapp/reset?key=' + EVOLUTION_API_KEY + '" class="btn btn-danger">🧹 Limpiar Sesión</a>' : ''}
         </div>
       </body>
       </html>
@@ -195,17 +189,11 @@ router.get('/status', async (req: Request, res: Response) => {
 });
 
 /**
- * Clean Reset Instance Route (Purges stale Baileys session keys)
+ * Clean Reset Instance Route (Admin Authenticated)
  */
-router.get('/reset', async (req: Request, res: Response) => {
+router.get('/reset', adminMiddleware, async (req: Request, res: Response) => {
   try {
-    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'medfamilia_whatsapp_key_2026';
-    const adminKey = req.query.key;
-
-    if (adminKey !== EVOLUTION_API_KEY) {
-      return res.status(401).send('<h2>🛑 Acceso No Autorizado</h2>');
-    }
-
+    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
     const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
     const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
 
@@ -250,14 +238,12 @@ router.get('/reset', async (req: Request, res: Response) => {
           .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 420px; }
           h2 { color: #059669; margin-top: 0; }
           p { color: #4b5563; font-size: 14px; line-height: 1.5; }
-          .btn { display: inline-block; margin-top: 15px; padding: 12px 24px; background: #2563eb; color: white; border-radius: 8px; text-decoration: none; font-weight: bold; }
         </style>
       </head>
       <body>
         <div class="card">
           <h2>✅ Sesión Limpiada Correctamente</h2>
           <p>Se eliminaron las claves temporales viejas que causaban el conflicto de conexión en WhatsApp.</p>
-          <a href="/api/whatsapp/pairing-code?key=${EVOLUTION_API_KEY}&number=573001234567" class="btn">📲 Generar Nuevo Código</a>
         </div>
       </body>
       </html>
@@ -268,17 +254,11 @@ router.get('/reset', async (req: Request, res: Response) => {
 });
 
 /**
- * Visual QR Display Route for scanning WhatsApp in browser
+ * Visual QR Display Route (Admin Authenticated)
  */
-router.get('/qr', async (req: Request, res: Response) => {
+router.get('/qr', adminMiddleware, async (req: Request, res: Response) => {
   try {
-    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
-    const adminKey = req.query.key;
-
-    if (!EVOLUTION_API_KEY || adminKey !== EVOLUTION_API_KEY) {
-      return res.status(401).send('<h2>🛑 Acceso No Autorizado</h2><p>Proporcione la clave secreta de administración configurada en la URL: <code>?key=TU_CLAVE_ADMIN</code></p>');
-    }
-
+    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
     const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
     const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE_NAME || 'medfamilia-wa';
 
@@ -346,17 +326,12 @@ router.get('/qr', async (req: Request, res: Response) => {
 });
 
 /**
- * Pairing Code Route (No Camera Needed - Numeric/Text Code)
+ * Pairing Code Route (Admin Authenticated)
  */
-router.get('/pairing-code', async (req: Request, res: Response) => {
+router.get('/pairing-code', adminMiddleware, async (req: Request, res: Response) => {
   try {
-    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
-    const adminKey = req.query.key;
+    const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
     const phone = (req.query.number as string || '').replace(/\D/g, '');
-
-    if (!EVOLUTION_API_KEY || adminKey !== EVOLUTION_API_KEY) {
-      return res.status(401).send('<h2>🛑 Acceso No Autorizado</h2><p>Proporcione la clave secreta de administración configurada en la URL: <code>?key=TU_CLAVE_ADMIN&number=57300...</code></p>');
-    }
 
     if (!phone) {
       return res.status(400).send('<h2>⚠️ Falta el número de celular</h2><p>Agregue su número con código de país en la URL: <code>&number=573001234567</code></p>');
@@ -461,6 +436,17 @@ function isDuplicateMessage(msgId?: string): boolean {
  */
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
+    const webhookToken = (req.headers['x-webhook-token'] as string) || (req.headers['apikey'] as string);
+    const expectedSecret = process.env.WEBHOOK_SECRET;
+    const expectedApiKey = process.env.EVOLUTION_API_KEY;
+
+    const isValid = (Boolean(expectedSecret) && webhookToken === expectedSecret) ||
+                    (Boolean(expectedApiKey) && webhookToken === expectedApiKey);
+
+    if (!isValid || !webhookToken) {
+      return res.status(401).json({ error: 'Acceso no autorizado al webhook de WhatsApp.' });
+    }
+
     const eventData = req.body;
     const eventType = (eventData?.event || '').toString().toLowerCase();
 
@@ -970,6 +956,18 @@ async function processBatchedMessages(phone: string) {
 
       if (targetFileUrl) {
         const filename = path.basename(targetFileUrl.split('?')[0]);
+
+        // Strict multi-tenant verification: verify that the file actually belongs to this family
+        const examMatch = db.prepare('SELECT id FROM exam_results WHERE family_id = ? AND file_url LIKE ?').get(familyId, `%${filename}`) as any;
+        const orderMatch = db.prepare('SELECT id FROM medical_orders WHERE family_id = ? AND file_url LIKE ?').get(familyId, `%${filename}`) as any;
+        const apptMatch = db.prepare('SELECT id FROM appointments WHERE family_id = ? AND photo_url LIKE ?').get(familyId, `%${filename}`) as any;
+
+        if (!examMatch && !orderMatch && !apptMatch) {
+          console.warn(`[${getLocalTimestamp()}] 🚨 [Acceso Denegado WhatsApp] El archivo "${filename}" no pertenece a la familia ${familyId}`);
+          await sendWhatsAppMessage(formattedPhone, `🔒 Acceso denegado: El archivo solicitado no pertenece a tu grupo familiar.`);
+          return;
+        }
+
         const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
         const localPath = path.join(uploadsDir, filename);
 
