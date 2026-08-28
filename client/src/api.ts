@@ -14,7 +14,10 @@ export function removeToken() {
 
 export function getFileUrl(url: string): string {
   if (!url) return '';
-  return url.split('?')[0];
+  const token = getToken();
+  const baseUrl = url.split('?')[0];
+  if (!token) return baseUrl;
+  return `${baseUrl}?token=${encodeURIComponent(token)}`;
 }
 
 export async function fetchFileBlob(url: string): Promise<string> {
