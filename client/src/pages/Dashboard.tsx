@@ -203,6 +203,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
 
       // 6. Subscribe with binary ArrayBuffer/Uint8Array applicationServerKey
       const convertedVapidKey = urlBase64ToUint8Array(res.publicKey);
+      console.log('Push Debug Info:', {
+        keyLength: convertedVapidKey.length,
+        protocol: window.location.protocol,
+        host: window.location.host,
+        userAgent: navigator.userAgent,
+      });
+
+      if (convertedVapidKey.length !== 65) {
+        throw new Error(
+          `La clave pública VAPID tiene una longitud inválida (${convertedVapidKey.length} bytes en lugar de 65). ` +
+          `Reinicia el servidor backend para que cargue claves VAPID correctas.`
+        );
+      }
+
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: convertedVapidKey as unknown as BufferSource,
@@ -238,6 +252,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
     } catch (err: any) {
       console.error('Error activando notificaciones:', err);
       const msg = err?.message || 'Error de comunicación o compatibilidad.';
+
+      if (msg.includes('push service error')) {
+        alert(
+          'Error del servicio Push ("push service error"):\n\n' +
+          'El navegador no pudo comunicarse con el servicio de notificaciones de Google (FCM).\n\n' +
+          'Causas más comunes y solución:\n' +
+          '1. Si usas Brave: Abre brave://settings/privacy y ACTIVA "Usar servicios de Google para mensajería push", luego reinicia Brave.\n' +
+          '2. Modo Incógnito / Ventana Privada: Los navegadores bloquean el registro Push en pestañas privadas. Ábrelo en una pestaña normal.\n' +
+          '3. Bloqueador de anuncios o VPN (AdBlock, uBlock, Pi-hole): Comprueba que no bloquee android.clients.google.com.\n' +
+          '4. Prueba reiniciar el navegador o cambiar a Google Chrome / Edge normal.'
+        );
+        return;
+      }
+
       alert(`Error activando notificaciones push: ${msg}`);
     }
   };
