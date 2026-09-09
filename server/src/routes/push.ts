@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../database/db.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
-import { getVapidPublicKey } from '../services/pushNotifications.js';
+import { getVapidPublicKey, sendNotificationToFamily } from '../services/pushNotifications.js';
 import { validateBody, v } from '../middleware/validation.js';
 
 const router = Router();
@@ -11,6 +11,23 @@ router.use(authMiddleware);
 // Get VAPID Public Key for client subscription
 router.get('/vapid-key', (req, res) => {
   return res.json({ publicKey: getVapidPublicKey() });
+});
+
+// Send test push notification to active family
+router.post('/test', async (req: AuthRequest, res) => {
+  const familyId = req.family!.id;
+  const result = await sendNotificationToFamily(familyId, {
+    title: '🩺 MedFamilia - Notificaciones Activas',
+    body: '¡Excelente! Las notificaciones push en tu dispositivo están funcionando correctamente.',
+    url: '/',
+  });
+
+  return res.json({
+    message: result.sent > 0
+      ? 'Notificación de prueba enviada con éxito.'
+      : 'Suscripción registrada, esperando confirmación del dispositivo.',
+    ...result,
+  });
 });
 
 // Save client subscription

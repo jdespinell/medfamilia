@@ -230,6 +230,7 @@ export async function runTier1Tests(): Promise<{ total: number; passed: number; 
 
       const vapidRes = await apiRequest(ctx.baseUrl, '/api/push/vapid-key', { token: fam.token });
       assert.strictEqual(vapidRes.status, 200);
+      assert.ok(typeof vapidRes.body.publicKey === 'string' && vapidRes.body.publicKey.length > 50);
 
       const subRes = await apiRequest(ctx.baseUrl, '/api/push/subscribe', {
         method: 'POST',
@@ -242,6 +243,12 @@ export async function runTier1Tests(): Promise<{ total: number; passed: number; 
         },
       });
       assert.strictEqual(subRes.status, 200);
+
+      const testRes = await apiRequest(ctx.baseUrl, '/api/push/test', {
+        method: 'POST',
+        token: fam.token,
+      });
+      assert.strictEqual(testRes.status, 200);
     });
 
     // F11: Gemini OCR & AI Endpoint

@@ -105,43 +105,140 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
     fetchData();
   }, [selectedPatientId, selectedSpecialty]);
 
+  // Check existing push notification subscription on mount
+  useEffect(() => {
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      navigator.serviceWorker.ready
+        .then((reg) => reg.pushManager.getSubscription())
+        .then((sub) => {
+          if (sub) {
+            setPushSubscribed(true);
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
+
+  // Convert Base64 URL-safe string to Uint8Array for PushManager compatibility
+  const urlBase64ToUint8Array = (base64String: string): Uint8Array => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
   // Request Push Notifications
   const handleEnablePush = async () => {
     try {
+      // 1. Check browser and context support
       if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        alert('Este navegador no admite notificaciones Push.');
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+        const isStandalone = (window.navigator as any).standalone === true;
+        if (isIOS && !isStandalone) {
+          alert('En iPhone/iPad (iOS), debes agregar MedFamilia a la pantalla de inicio (Compartir > "Agregar a inicio") para activar las notificaciones Push.');
+          return;
+        }
+        alert('Este navegador o dispositivo no admite notificaciones Push.');
         return;
       }
 
+      // Check secure context
+      if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        alert('Las notificaciones Push requieren una conexión segura HTTPS o localhost.');
+        return;
+      }
+
+      // If already subscribed, offer to send a test notification
+      if (pushSubscribed) {
+        const confirmTest = window.confirm('Las notificaciones ya están activadas en este dispositivo.\n\n¿Deseas enviar una notificación de prueba para comprobarla?');
+        if (confirmTest) {
+          try {
+            await apiRequest('/push/test', { method: 'POST' });
+            alert('¡Notificación de prueba enviada! Revisa las notificaciones de tu dispositivo.');
+          } catch (e: any) {
+            alert(`No se pudo enviar la prueba: ${e.message || 'Error del servidor'}`);
+          }
+        }
+        return;
+      }
+
+      // 2. Request Notification Permission
       const permission = await Notification.requestPermission();
+      if (permission === 'denied') {
+        alert('El permiso de notificaciones está bloqueado en tu navegador. Por favor actívalo desde la configuración del sitio (ícono de candado o ajustes del navegador).');
+        return;
+      }
       if (permission !== 'granted') {
-        alert('Permiso de notificaciones denegado.');
+        alert('No se otorgaron permisos para mostrar notificaciones.');
         return;
       }
 
+      // 3. Get VAPID Public Key from server
       const res = await apiRequest('/push/vapid-key');
       if (!res.publicKey) {
-        alert('Las notificaciones push requieren configurar VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY en el servidor.');
+        alert('Las notificaciones push aún no están listas en el servidor.');
         return;
       }
 
-      const registration = await navigator.serviceWorker.ready;
+      // 4. Ensure Service Worker is registered & ready
+      let registration = await navigator.serviceWorker.getRegistration();
+      if (!registration) {
+        registration = await navigator.serviceWorker.register('/sw.js');
+      }
+      await navigator.serviceWorker.ready;
 
+      // 5. Clean up any stale subscription before subscribing with new key
+      const existingSub = await registration.pushManager.getSubscription();
+      if (existingSub) {
+        try {
+          await existingSub.unsubscribe();
+        } catch (unsubErr) {
+          console.warn('Error desuscribiendo clave previa:', unsubErr);
+        }
+      }
+
+      // 6. Subscribe with binary ArrayBuffer/Uint8Array applicationServerKey
+      const convertedVapidKey = urlBase64ToUint8Array(res.publicKey);
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: res.publicKey,
+        applicationServerKey: convertedVapidKey as unknown as BufferSource,
       });
+
+      // 7. Explicitly format subscription payload for backend validation
+      const subJson = subscription.toJSON();
+      const payload = {
+        subscription: {
+          endpoint: subscription.endpoint,
+          keys: {
+            p256dh: subJson.keys?.p256dh || '',
+            auth: subJson.keys?.auth || '',
+          },
+        },
+      };
 
       await apiRequest('/push/subscribe', {
         method: 'POST',
-        body: JSON.stringify({ subscription }),
+        body: JSON.stringify(payload),
       });
 
       setPushSubscribed(true);
-      alert('¡Notificaciones push activadas correctamente para tu celular!');
+
+      // 8. Trigger immediate test notification to verify delivery
+      try {
+        await apiRequest('/push/test', { method: 'POST' });
+      } catch (testErr) {
+        console.warn('Error enviando notificación de bienvenida:', testErr);
+      }
+
+      alert('¡Notificaciones push activadas correctamente! Te enviamos una notificación de bienvenida.');
     } catch (err: any) {
       console.error('Error activando notificaciones:', err);
-      alert('Error activando notificaciones push.');
+      const msg = err?.message || 'Error de comunicación o compatibilidad.';
+      alert(`Error activando notificaciones push: ${msg}`);
     }
   };
 
@@ -345,7 +442,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
           <div className="flex items-center gap-2">
             <button
               onClick={handleEnablePush}
-              title="Activar Notificaciones"
+              title={pushSubscribed ? 'Notificaciones Push activas (clic para enviar prueba)' : 'Activar Notificaciones Push'}
               className={`p-2.5 rounded-2xl border transition ${
                 pushSubscribed
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-600'

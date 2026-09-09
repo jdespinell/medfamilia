@@ -5,11 +5,17 @@ import './index.css';
 
 // Register Service Worker for PWA & Push Notifications
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
+  const registerSW = () => {
     navigator.serviceWorker.register('/sw.js').catch((err) => {
-      console.log('Error registrando Service Worker:', err);
+      console.warn('Error registrando Service Worker:', err);
     });
-  });
+  };
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    registerSW();
+  } else {
+    window.addEventListener('load', registerSW);
+  }
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
