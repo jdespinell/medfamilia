@@ -6,7 +6,7 @@ import db, { recordStagingUpload } from '../database/db.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { secureUpload, validateUploadedFiles } from '../middleware/upload.js';
 import { aiRateLimiter } from '../middleware/rateLimiter.js';
-import { validateBody, validateParams, validateQuery, v } from '../middleware/validation.js';
+import { validateBody, validateParams, validateQuery, validateRequest, v } from '../middleware/validation.js';
 import { summarizeExamResult } from '../services/gemini.js';
 
 const router = Router();
@@ -17,11 +17,12 @@ router.get(
   '/',
   validateQuery({
     patient_id: v.string({ min: 1, max: 50, optional: true }),
+    specialty: v.string({ min: 1, max: 100, optional: true }),
   }),
   (req: AuthRequest, res) => {
     try {
       const familyId = req.family!.id;
-      const { patient_id } = req.query;
+      const { patient_id, specialty } = req.query;
 
       let query = `
         SELECT e.*, p.name as patient_name, p.color as patient_color
@@ -34,6 +35,11 @@ router.get(
       if (patient_id && typeof patient_id === 'string' && patient_id !== 'all') {
         query += ` AND e.patient_id = ?`;
         params.push(patient_id);
+      }
+
+      if (specialty && typeof specialty === 'string' && specialty !== 'all') {
+        query += ` AND e.specialty = ?`;
+        params.push(specialty);
       }
 
       query += ` ORDER BY e.created_at DESC`;
@@ -57,18 +63,21 @@ router.post(
     patient_id: v.uuid(),
     title: v.string({ min: 1, max: 200 }),
     appointment_id: v.uuid({ optional: true }),
+    specialty: v.string({ min: 1, max: 100, optional: true }),
+    notes: v.string({ min: 1, max: 2000, optional: true }),
+    exam_date: v.string({ min: 1, max: 64, optional: true }),
   }),
   async (req: AuthRequest, res) => {
     try {
       const familyId = req.family!.id;
-      const { patient_id, appointment_id, title } = req.body;
+      const { patient_id, appointment_id, title, specialty, notes, exam_date } = req.body;
 
       if (!req.file) {
         return res.status(400).json({ error: 'No se subió ningún archivo de examen.' });
       }
 
       // Verify patient ownership
-      const patient = db.prepare('SELECT id FROM patients WHERE id = ? AND family_id = ?').get(patient_id, familyId);
+      const patient = db.prepare('SELECT id, name FROM patients WHERE id = ? AND family_id = ?').get(patient_id, familyId) as any;
       if (!patient) {
         if (req.file && fs.existsSync(req.file.path)) {
           try { fs.unlinkSync(req.file.path); } catch (e) {}
@@ -77,16 +86,16 @@ router.post(
       }
 
       // If appointment_id is supplied, verify appointment ownership
-      let validAppointmentId: string | null = null;
+      let validExamAppointmentId: string | null = null;
       if (appointment_id && typeof appointment_id === 'string' && appointment_id.trim()) {
-        const appt = db.prepare('SELECT id FROM appointments WHERE id = ? AND family_id = ?').get(appointment_id, familyId);
+        const appt = db.prepare('SELECT id, appointment_type FROM appointments WHERE id = ? AND family_id = ?').get(appointment_id, familyId) as any;
         if (!appt) {
           if (req.file && fs.existsSync(req.file.path)) {
             try { fs.unlinkSync(req.file.path); } catch (e) {}
           }
           return res.status(403).json({ error: 'La cita asociada no pertenece a su grupo familiar.' });
         }
-        validAppointmentId = appointment_id;
+        validExamAppointmentId = appointment_id;
       }
 
       const filePath = req.file.path;
@@ -109,28 +118,54 @@ router.post(
 
       const id = uuidv4();
       const cleanTitle = title.trim();
+      const cleanSpecialty = specialty && typeof specialty === 'string' ? specialty.trim() : null;
+      const cleanNotes = notes && typeof notes === 'string' ? notes.trim() : null;
+
+      // Determine exam date: use provided exam_date, else use now
+      const effectiveExamDate = exam_date && typeof exam_date === 'string' ? exam_date.trim() : new Date().toISOString();
+
+      // If no exam appointment was provided, create one automatically
+      if (!validExamAppointmentId) {
+        const autoApptId = uuidv4();
+        const autoTitle = `Examen: ${cleanTitle}`;
+        db.prepare(`
+          INSERT INTO appointments (
+            id, family_id, patient_id, title, appointment_type, specialty,
+            date_time, requires_fasting, status
+          ) VALUES (?, ?, ?, ?, 'examen', ?, ?, 0, 'realizada')
+        `).run([
+          autoApptId,
+          familyId,
+          patient_id,
+          autoTitle,
+          cleanSpecialty,
+          effectiveExamDate,
+        ]);
+        validExamAppointmentId = autoApptId;
+      }
 
       db.prepare(`
-        INSERT INTO exam_results (id, family_id, patient_id, appointment_id, title, file_url, file_type, summary_ai)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO exam_results (id, family_id, patient_id, exam_appointment_id, appointment_id, title, file_url, file_type, summary_ai, specialty, notes, exam_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run([
         id,
         familyId,
         patient_id,
-        validAppointmentId,
+        validExamAppointmentId,
+        validExamAppointmentId,  // legacy appointment_id field also set for backward compat
         cleanTitle,
         fileUrl,
         fileType,
-        summaryAi
+        summaryAi,
+        cleanSpecialty,
+        cleanNotes,
+        effectiveExamDate,
       ]);
 
-      const examResult = db.prepare('SELECT * FROM exam_results WHERE id = ? AND family_id = ?').get(id, familyId);
+      // NOTE: We intentionally do NOT auto-update the appointment status to 'completada'.
+      // Status is only changed when the user explicitly does so, or when computed by date.
 
-      // If linked to appointment, update appointment status to 'completada' (ensuring family_id scoping)
-      if (validAppointmentId) {
-        db.prepare("UPDATE appointments SET status = 'completada' WHERE id = ? AND family_id = ?").run(validAppointmentId, familyId);
-      }
-
+      const examResult = db.prepare('SELECT e.*, p.name as patient_name, p.color as patient_color FROM exam_results e JOIN patients p ON e.patient_id = p.id WHERE e.id = ? AND e.family_id = ?').get(id, familyId);
       return res.json(examResult);
     } catch (error) {
       if (req.file && fs.existsSync(req.file.path)) {
@@ -138,6 +173,49 @@ router.post(
       }
       console.error('Error subiendo resultado de examen:', error);
       return res.status(500).json({ error: 'Error procesando el resultado del examen.' });
+    }
+  }
+);
+
+// Update exam result (edit title, specialty, notes)
+router.put(
+  '/:id',
+  validateRequest({
+    params: { id: v.uuid() },
+    body: {
+      title: v.string({ min: 1, max: 200, optional: true }),
+      specialty: v.string({ min: 1, max: 100, optional: true }),
+      notes: v.string({ min: 1, max: 2000, optional: true }),
+    },
+  }),
+  (req: AuthRequest, res) => {
+    try {
+      const familyId = req.family!.id;
+      const { id } = req.params;
+      const { title, specialty, notes } = req.body;
+
+      const existing = db.prepare('SELECT * FROM exam_results WHERE id = ? AND family_id = ?').get(id, familyId) as any;
+      if (!existing) {
+        return res.status(404).json({ error: 'Resultado de examen no encontrado o no pertenece a su familia.' });
+      }
+
+      db.prepare(`
+        UPDATE exam_results SET
+          title = ?, specialty = ?, notes = ?
+        WHERE id = ? AND family_id = ?
+      `).run([
+        title && typeof title === 'string' ? title.trim() : existing.title,
+        specialty !== undefined ? (typeof specialty === 'string' ? specialty.trim() : null) : existing.specialty,
+        notes !== undefined ? (typeof notes === 'string' ? notes.trim() : null) : existing.notes,
+        id,
+        familyId,
+      ]);
+
+      const updated = db.prepare('SELECT e.*, p.name as patient_name, p.color as patient_color FROM exam_results e JOIN patients p ON e.patient_id = p.id WHERE e.id = ? AND e.family_id = ?').get(id, familyId);
+      return res.json(updated);
+    } catch (error) {
+      console.error('Error actualizando resultado de examen:', error);
+      return res.status(500).json({ error: 'Error al actualizar el resultado.' });
     }
   }
 );
@@ -157,6 +235,9 @@ router.delete(
       if (!existing) {
         return res.status(404).json({ error: 'Resultado de examen no encontrado o no pertenece a su familia.' });
       }
+
+      // Clean up appointment_exam_links
+      try { db.prepare('DELETE FROM appointment_exam_links WHERE exam_result_id = ? AND family_id = ?').run(id, familyId); } catch(e) {}
 
       // Delete DB record
       db.prepare('DELETE FROM exam_results WHERE id = ? AND family_id = ?').run(id, familyId);
@@ -180,6 +261,57 @@ router.delete(
   }
 );
 
+// Link an exam result to a consultation appointment for review
+router.post(
+  '/:id/link',
+  validateRequest({
+    params: { id: v.uuid() },
+    body: { appointment_id: v.uuid() },
+  }),
+  (req: AuthRequest, res) => {
+    try {
+      const familyId = req.family!.id;
+      const { id } = req.params;
+      const { appointment_id } = req.body;
+
+      const exam = db.prepare('SELECT id FROM exam_results WHERE id = ? AND family_id = ?').get(id, familyId);
+      if (!exam) return res.status(404).json({ error: 'Resultado no encontrado.' });
+
+      const appt = db.prepare('SELECT id FROM appointments WHERE id = ? AND family_id = ?').get(appointment_id, familyId);
+      if (!appt) return res.status(404).json({ error: 'Cita no encontrada.' });
+
+      const linkId = uuidv4();
+      try {
+        db.prepare('INSERT INTO appointment_exam_links (id, appointment_id, exam_result_id, family_id) VALUES (?, ?, ?, ?)').run(linkId, appointment_id, id, familyId);
+      } catch (e: any) {
+        if (e.message?.includes('UNIQUE')) {
+          return res.json({ message: 'Ya vinculado.' });
+        }
+        throw e;
+      }
+
+      return res.json({ message: 'Resultado vinculado a la cita correctamente.' });
+    } catch (error) {
+      console.error('Error vinculando resultado a cita:', error);
+      return res.status(500).json({ error: 'Error al vincular el resultado.' });
+    }
+  }
+);
+
+// Unlink an exam result from a consultation appointment
+router.delete(
+  '/:id/link/:appointment_id',
+  validateParams({ id: v.uuid(), appointment_id: v.uuid() }),
+  (req: AuthRequest, res) => {
+    try {
+      const familyId = req.family!.id;
+      const { id, appointment_id } = req.params;
+      db.prepare('DELETE FROM appointment_exam_links WHERE exam_result_id = ? AND appointment_id = ? AND family_id = ?').run(id, appointment_id, familyId);
+      return res.json({ message: 'Vínculo eliminado.' });
+    } catch (error) {
+      return res.status(500).json({ error: 'Error al desvincular.' });
+    }
+  }
+);
+
 export default router;
-
-

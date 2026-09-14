@@ -25,6 +25,7 @@ import {
 import { apiRequest, getFileUrl } from '../api';
 import { Appointment, ExamResult, MedicalOrder } from '../types';
 import { OrderConfirmationModal, DraftOrder } from './OrderConfirmationModal';
+import { StatusActionMenu } from './StatusActionMenu';
 
 interface AppointmentDetailModalProps {
   appointment: Appointment;
@@ -72,6 +73,7 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   // Upload results modal state inside detail view
   const [showUploadResult, setShowUploadResult] = useState(false);
   const [resultTitle, setResultTitle] = useState('');
+  const [resultSpecialty, setResultSpecialty] = useState('');
   const [resultFile, setResultFile] = useState<File | null>(null);
   const [uploadingResult, setUploadingResult] = useState(false);
   const [uploadError, setUploadError] = useState('');
@@ -116,6 +118,9 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
       formData.append('patient_id', appointment.patient_id);
       formData.append('appointment_id', appointment.id);
       formData.append('title', resultTitle);
+      if (resultSpecialty) {
+        formData.append('specialty', resultSpecialty);
+      }
 
       const res = await apiRequest('/exams/upload', {
         method: 'POST',
@@ -125,6 +130,7 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
       setAttachedResults([res, ...attachedResults]);
       setShowUploadResult(false);
       setResultTitle('');
+      setResultSpecialty('');
       setResultFile(null);
       onRefresh();
     } catch (err: any) {
@@ -268,6 +274,7 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <StatusActionMenu appointment={appointment} onRefresh={onRefresh} />
             <button
               onClick={() => {
                 onClose();
@@ -684,6 +691,14 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
                   className="w-full p-3 text-sm rounded-xl border border-emerald-200 bg-white font-semibold"
                 />
 
+                <input
+                  type="text"
+                  placeholder="Especialidad (opcional)"
+                  value={resultSpecialty}
+                  onChange={(e) => setResultSpecialty(e.target.value)}
+                  className="w-full p-3 text-sm rounded-xl border border-emerald-200 bg-white font-semibold"
+                />
+
                 {/* 3 Explicit Buttons for Camera, Gallery, or PDF */}
                 {resultFile ? (
                   <div className="p-3 bg-white border border-emerald-300 rounded-xl flex items-center justify-between">
@@ -774,18 +789,45 @@ export const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
             ) : (
               attachedResults.map((r) => (
                 <div key={r.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-base font-bold text-slate-900">{r.title}</h4>
-                    <a
-                      href={getFileUrl(r.file_url)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs flex items-center gap-1"
-                    >
-                      <FileDown className="w-3.5 h-3.5" />
-                      <span>Ver Archivo</span>
-                    </a>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-base font-bold text-slate-900">{r.title}</h4>
+                      {r.specialty && (
+                        <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg">{r.specialty}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <a
+                        href={getFileUrl(r.file_url)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs flex items-center gap-1"
+                      >
+                        <FileDown className="w-3.5 h-3.5" />
+                        <span>Ver</span>
+                      </a>
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm('¿Eliminar este resultado de examen?')) return;
+                          try {
+                            await apiRequest(`/exams/${r.id}`, { method: 'DELETE' });
+                            setAttachedResults(prev => prev.filter(x => x.id !== r.id));
+                            onRefresh();
+                          } catch (err: any) {
+                            alert(err.message || 'Error eliminando resultado.');
+                          }
+                        }}
+                        className="p-1.5 rounded-xl bg-red-50 text-red-500 hover:bg-red-100 transition"
+                        title="Eliminar resultado"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
+
+                  {r.notes && (
+                    <p className="text-xs text-slate-600 italic">{r.notes}</p>
+                  )}
 
                   {r.summary_ai && (
                     <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 text-xs text-slate-800 space-y-1">

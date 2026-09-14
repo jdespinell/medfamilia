@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { X, FileText, Upload, Sparkles, AlertTriangle, CheckCircle, ExternalLink } from 'lucide-react';
+import { X, FileText, Upload, Sparkles, AlertTriangle, CheckCircle, ExternalLink, Info } from 'lucide-react';
 import { apiRequest } from '../api';
-import { Patient, Appointment } from '../types';
+import { Patient, Appointment, Specialty } from '../types';
 
 interface ExamModalProps {
   patients: Patient[];
   appointments: Appointment[];
+  specialties?: Specialty[];
   onClose: () => void;
   onSaved: () => void;
 }
@@ -13,12 +14,16 @@ interface ExamModalProps {
 export const ExamModal: React.FC<ExamModalProps> = ({
   patients,
   appointments,
+  specialties = [],
   onClose,
   onSaved,
 }) => {
   const [patientId, setPatientId] = useState(patients[0]?.id || '');
   const [appointmentId, setAppointmentId] = useState('');
   const [title, setTitle] = useState('');
+  const [specialty, setSpecialty] = useState('');
+  const [notes, setNotes] = useState('');
+  const [examDate, setExamDate] = useState(new Date().toISOString().slice(0, 16)); // default today
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -29,7 +34,6 @@ export const ExamModal: React.FC<ExamModalProps> = ({
       const f = e.target.files[0];
       setFile(f);
       if (!title) {
-        // Auto title recommendation
         const cleanName = f.name.replace(/\.[^/.]+$/, '');
         setTitle(`Resultado ${cleanName}`);
       }
@@ -49,6 +53,9 @@ export const ExamModal: React.FC<ExamModalProps> = ({
       formData.append('patient_id', patientId);
       formData.append('title', title);
       if (appointmentId) formData.append('appointment_id', appointmentId);
+      if (specialty) formData.append('specialty', specialty);
+      if (notes) formData.append('notes', notes);
+      if (examDate) formData.append('exam_date', new Date(examDate).toISOString());
 
       const res = await apiRequest('/exams/upload', {
         method: 'POST',
@@ -63,6 +70,11 @@ export const ExamModal: React.FC<ExamModalProps> = ({
       setLoading(false);
     }
   };
+
+  // Examen appointments for the selected patient
+  const patientAppointments = appointments.filter(
+    (a) => a.patient_id === patientId && (a.appointment_type === 'examen' || a.appointment_type === 'laboratorio')
+  );
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
@@ -81,7 +93,7 @@ export const ExamModal: React.FC<ExamModalProps> = ({
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-6">
+        <div className="p-6 overflow-y-auto space-y-5">
           {error && (
             <div className="p-4 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-sm font-semibold flex items-center gap-3">
               <AlertTriangle className="w-5 h-5 shrink-0" />
@@ -96,7 +108,7 @@ export const ExamModal: React.FC<ExamModalProps> = ({
                 <CheckCircle className="w-6 h-6 text-emerald-600 shrink-0" />
                 <div>
                   <p className="font-bold">¡Examen guardado y analizado con éxito!</p>
-                  <p className="text-xs text-emerald-700">Gemini ha generado un resumen en lenguaje claro para tus padres.</p>
+                  <p className="text-xs text-emerald-700">Gemini ha generado un resumen en lenguaje claro para entender los resultados.</p>
                 </div>
               </div>
 
@@ -154,25 +166,73 @@ export const ExamModal: React.FC<ExamModalProps> = ({
                 />
               </div>
 
+              {/* Specialty */}
+              <div>
+                <label className="block text-sm font-bold text-slate-800 mb-1.5">
+                  Especialidad (recomendado)
+                </label>
+                <select
+                  value={specialty}
+                  onChange={(e) => setSpecialty(e.target.value)}
+                  className="w-full p-3.5 text-base rounded-2xl border-2 border-slate-200 focus:border-emerald-600 focus:outline-none bg-slate-50 font-semibold"
+                >
+                  <option value="">Sin especialidad específica</option>
+                  {specialties.map((s) => (
+                    <option key={s.id} value={s.name}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Exam Date */}
+              <div>
+                <label className="block text-sm font-bold text-slate-800 mb-1.5">
+                  Fecha del Examen
+                </label>
+                <input
+                  type="datetime-local"
+                  value={examDate}
+                  onChange={(e) => setExamDate(e.target.value)}
+                  className="w-full p-3.5 text-base rounded-2xl border-2 border-slate-200 focus:border-emerald-600 focus:outline-none bg-slate-50 font-semibold"
+                />
+              </div>
+
               {/* Optional Appointment Link */}
               <div>
                 <label className="block text-sm font-bold text-slate-800 mb-1.5">
-                  Vincular a una cita previa (opcional)
+                  Vincular a cita de examen previa (opcional)
                 </label>
                 <select
                   value={appointmentId}
                   onChange={(e) => setAppointmentId(e.target.value)}
                   className="w-full p-3.5 text-base rounded-2xl border-2 border-slate-200 focus:border-emerald-600 focus:outline-none bg-slate-50"
                 >
-                  <option value="">Ninguna - Es un examen independiente</option>
-                  {appointments
-                    .filter((a) => a.patient_id === patientId)
-                    .map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.title} ({new Date(a.date_time).toLocaleDateString()})
-                      </option>
-                    ))}
+                  <option value="">Ninguna — Se creará cita de examen automáticamente</option>
+                  {patientAppointments.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.title} ({new Date(a.date_time).toLocaleDateString('es-ES')})
+                    </option>
+                  ))}
                 </select>
+                {!appointmentId && (
+                  <div className="mt-2 p-3 rounded-xl bg-blue-50 border border-blue-200 flex items-start gap-2 text-xs font-medium text-blue-700">
+                    <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>Se creará automáticamente una cita de tipo "examen" con la fecha indicada arriba para organizar este resultado en el historial.</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-sm font-bold text-slate-800 mb-1.5">
+                  Notas adicionales (opcional)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="ej. Tomado en ayunas, laboratorio X..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="w-full p-3.5 text-sm rounded-2xl border-2 border-slate-200 focus:border-emerald-600 focus:outline-none bg-slate-50 font-medium resize-none"
+                />
               </div>
 
               {/* File Uploader */}

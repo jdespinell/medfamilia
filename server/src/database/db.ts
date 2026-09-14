@@ -224,6 +224,50 @@ export function initDatabase() {
     }
   }
 
+  // New migrations: appointment_history table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS appointment_history (
+      id TEXT PRIMARY KEY,
+      appointment_id TEXT NOT NULL,
+      family_id TEXT NOT NULL,
+      previous_status TEXT,
+      new_status TEXT NOT NULL,
+      previous_date_time TEXT,
+      new_date_time TEXT,
+      reason TEXT,
+      changed_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (appointment_id) REFERENCES appointments (id) ON DELETE CASCADE,
+      FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS appointment_exam_links (
+      id TEXT PRIMARY KEY,
+      appointment_id TEXT NOT NULL,
+      exam_result_id TEXT NOT NULL,
+      family_id TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (appointment_id) REFERENCES appointments (id) ON DELETE CASCADE,
+      FOREIGN KEY (exam_result_id) REFERENCES exam_results (id) ON DELETE CASCADE,
+      FOREIGN KEY (family_id) REFERENCES families (id) ON DELETE CASCADE
+    );
+  `);
+
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_apt_exam_links_unique ON appointment_exam_links(appointment_id, exam_result_id);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_apt_history_appointment ON appointment_history(appointment_id);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_apt_exam_links_exam ON appointment_exam_links(exam_result_id);`);
+
+  // New columns for exam_results
+  try { db.exec('ALTER TABLE exam_results ADD COLUMN exam_appointment_id TEXT REFERENCES appointments(id) ON DELETE SET NULL;'); } catch (e) {}
+  try { db.exec('ALTER TABLE exam_results ADD COLUMN specialty TEXT;'); } catch (e) {}
+  try { db.exec('ALTER TABLE exam_results ADD COLUMN notes TEXT;'); } catch (e) {}
+  try { db.exec('ALTER TABLE exam_results ADD COLUMN exam_date TEXT;'); } catch (e) {}
+
+  // New columns for appointments
+  try { db.exec('ALTER TABLE appointments ADD COLUMN rescheduled_to_id TEXT;'); } catch (e) {}
+
   console.log('Database initialized successfully at:', dbPath);
 }
 

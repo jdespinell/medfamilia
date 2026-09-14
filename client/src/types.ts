@@ -36,17 +36,34 @@ export interface Specialty {
   name: string;
 }
 
+export interface AppointmentHistory {
+  id: string;
+  appointment_id: string;
+  family_id: string;
+  previous_status?: string;
+  new_status: string;
+  previous_date_time?: string;
+  new_date_time?: string;
+  reason?: string;
+  changed_by?: string;
+  created_at: string;
+}
+
 export interface ExamResult {
   id: string;
   family_id: string;
   patient_id: string;
   patient_name?: string;
   patient_color?: string;
-  appointment_id?: string;
+  appointment_id?: string;         // legacy field (backward compat)
+  exam_appointment_id?: string;    // the exam appointment where it was performed
   title: string;
   file_url: string;
   file_type: 'pdf' | 'image';
   summary_ai?: string;
+  specialty?: string;
+  notes?: string;
+  exam_date?: string;
   created_at: string;
 }
 
@@ -84,10 +101,13 @@ export interface Appointment {
   prep_instructions?: string;
   photo_url?: string;
   doctor_notes?: string;
-  status: 'pendiente' | 'completada' | 'cancelada';
+  status: 'pendiente' | 'realizada' | 'cancelada' | 'reprogramada';
+  computed_status?: 'pendiente' | 'realizada' | 'cancelada' | 'reprogramada';
   google_event_id?: string;
-  attached_results?: ExamResult[];
+  attached_results?: ExamResult[];   // linked via appointment_exam_links
   origin_order_id?: string;
   origin_order?: MedicalOrder;
   medical_orders?: MedicalOrder[];
+  history?: AppointmentHistory[];
+  rescheduled_to_id?: string;
 }

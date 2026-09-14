@@ -1,14 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest, getToken, removeToken } from './api';
-import { Family } from './types';
+import { Family, Patient, Specialty } from './types';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { AdminPage } from './pages/AdminPage';
+import { PatientTimelinePage } from './pages/PatientTimelinePage';
 
 export const App: React.FC = () => {
   const [isAdminRoute, setIsAdminRoute] = useState(window.location.pathname.startsWith('/admin'));
   const [family, setFamily] = useState<Family | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Patient timeline navigation state
+  const [timelinePatient, setTimelinePatient] = useState<Patient | null>(null);
+  const [specialtiesList, setSpecialtiesList] = useState<Specialty[]>([]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -62,7 +67,27 @@ export const App: React.FC = () => {
     return <Login onLoginSuccess={(fam) => setFamily(fam)} />;
   }
 
-  return <Dashboard family={family} onLogout={handleLogout} />;
+  // Show patient timeline page when a patient is selected
+  if (timelinePatient) {
+    return (
+      <PatientTimelinePage
+        patient={timelinePatient}
+        specialties={specialtiesList}
+        onBack={() => setTimelinePatient(null)}
+      />
+    );
+  }
+
+  return (
+    <Dashboard
+      family={family}
+      onLogout={handleLogout}
+      onViewPatientTimeline={(patient, specialties) => {
+        setSpecialtiesList(specialties || []);
+        setTimelinePatient(patient);
+      }}
+    />
+  );
 
   function handleLogout() {
     removeToken();

@@ -25,7 +25,8 @@ import {
   ClipboardList,
   Trash2,
   ExternalLink,
-  Sparkles
+  Sparkles,
+  Activity,
 } from 'lucide-react';
 import { apiRequest, getFileUrl, removeToken } from '../api';
 import { Family, Patient, Appointment, Specialty, MedicalOrder } from '../types';
@@ -37,9 +38,11 @@ import { WhatsAppNumbersModal } from '../components/WhatsAppNumbersModal';
 interface DashboardProps {
   family: Family;
   onLogout: () => void;
+  onViewPatientTimeline?: (patient: Patient, specialties: Specialty[]) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout, onViewPatientTimeline }) => {
+
   const [patients, setPatients] = useState<Patient[]>([]);
   const [specialtiesList, setSpecialtiesList] = useState<Specialty[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string>('all');
@@ -308,15 +311,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
     window.open(whatsappUrl, '_blank');
   };
 
-  // Separate upcoming vs past appointments
+  // Separate upcoming vs past appointments using computed_status
   const nowTime = new Date().getTime();
   const upcomingAppointments = appointments
-    .filter((a) => new Date(a.date_time).getTime() >= nowTime && a.status !== 'completada')
+    .filter((a) => {
+      const effStatus = a.computed_status || a.status;
+      return new Date(a.date_time).getTime() >= nowTime && effStatus !== 'cancelada' && effStatus !== 'realizada';
+    })
     .sort((a, b) => new Date(a.date_time).getTime() - new Date(b.date_time).getTime());
 
   const pastAppointments = appointments
-    .filter((a) => new Date(a.date_time).getTime() < nowTime || a.status === 'completada')
+    .filter((a) => {
+      const effStatus = a.computed_status || a.status;
+      return new Date(a.date_time).getTime() < nowTime || effStatus === 'realizada' || effStatus === 'cancelada';
+    })
     .sort((a, b) => new Date(b.date_time).getTime() - new Date(a.date_time).getTime());
+
 
   const renderAppointmentCard = (a: Appointment, isPast = false) => {
     const dateObj = new Date(a.date_time);
@@ -522,22 +532,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>Todos los Pacientes</span>
+            <span>Todos</span>
           </button>
 
           {patients.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setSelectedPatientId(p.id)}
-              className={`px-4 py-2.5 rounded-2xl font-bold text-sm shrink-0 transition flex items-center gap-2 border ${
-                selectedPatientId === p.id
-                  ? 'bg-slate-900 text-white border-slate-900 shadow-md'
-                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
-              <span>{p.name}</span>
-            </button>
+            <div key={p.id} className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => setSelectedPatientId(p.id)}
+                className={`px-4 py-2.5 rounded-2xl font-bold text-sm transition flex items-center gap-2 border ${
+                  selectedPatientId === p.id
+                    ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
+                <span>{p.name}</span>
+              </button>
+              {onViewPatientTimeline && (
+                <button
+                  onClick={() => onViewPatientTimeline(p, specialtiesList)}
+                  title={`Ver historial completo de ${p.name}`}
+                  className="p-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition"
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           ))}
 
           <button
@@ -547,6 +567,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout }) => {
             + Familiar
           </button>
         </div>
+
 
         {/* Specialty Filter Dropdown Bar */}
         <div className="bg-white px-4 py-2.5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between gap-3">
