@@ -88,20 +88,22 @@ router.get(
         // Compute effective status based on date (never mutates DB)
         app.computed_status = computeStatus(app.status, app.date_time);
 
-        // Attach exam results linked via appointment_exam_links (consultation references)
+        // Attach exam results linked via direct appointment_id, exam_appointment_id, or appointment_exam_links
         try {
-          const linkedResults = db.prepare(`
-            SELECT e.*, p.name as patient_name
-            FROM appointment_exam_links ael
-            JOIN exam_results e ON ael.exam_result_id = e.id
+          const attached = db.prepare(`
+            SELECT DISTINCT e.*, p.name as patient_name, p.color as patient_color
+            FROM exam_results e
             JOIN patients p ON e.patient_id = p.id
-            WHERE ael.appointment_id = ? AND ael.family_id = ?
+            WHERE e.family_id = ? AND (
+              e.appointment_id = ?
+              OR e.exam_appointment_id = ?
+              OR e.id IN (SELECT ael.exam_result_id FROM appointment_exam_links ael WHERE ael.appointment_id = ? AND ael.family_id = ?)
+            )
             ORDER BY e.created_at DESC
-          `).all([app.id, familyId]) as any[];
-          app.attached_results = linkedResults;
+          `).all([familyId, app.id, app.id, app.id, familyId]) as any[];
+          app.attached_results = attached;
         } catch (e) {
-          // Table may not exist yet in old installations
-          const results = db.prepare('SELECT * FROM exam_results WHERE appointment_id = ? AND family_id = ? ORDER BY created_at DESC').all([app.id, familyId]) as any[];
+          const results = db.prepare('SELECT * FROM exam_results WHERE (appointment_id = ? OR exam_appointment_id = ?) AND family_id = ? ORDER BY created_at DESC').all([app.id, app.id, familyId]) as any[];
           app.attached_results = results;
         }
 
@@ -378,17 +380,20 @@ router.put(
       updated.computed_status = computeStatus(updated.status, updated.date_time);
 
       try {
-        const linkedResults = db.prepare(`
-          SELECT e.*, p.name as patient_name
-          FROM appointment_exam_links ael
-          JOIN exam_results e ON ael.exam_result_id = e.id
+        const attached = db.prepare(`
+          SELECT DISTINCT e.*, p.name as patient_name, p.color as patient_color
+          FROM exam_results e
           JOIN patients p ON e.patient_id = p.id
-          WHERE ael.appointment_id = ? AND ael.family_id = ?
+          WHERE e.family_id = ? AND (
+            e.appointment_id = ?
+            OR e.exam_appointment_id = ?
+            OR e.id IN (SELECT ael.exam_result_id FROM appointment_exam_links ael WHERE ael.appointment_id = ? AND ael.family_id = ?)
+          )
           ORDER BY e.created_at DESC
-        `).all([id, familyId]) as any[];
-        updated.attached_results = linkedResults;
+        `).all([familyId, id, id, id, familyId]) as any[];
+        updated.attached_results = attached;
       } catch (e) {
-        const results = db.prepare('SELECT * FROM exam_results WHERE appointment_id = ? AND family_id = ? ORDER BY created_at DESC').all([id, familyId]) as any[];
+        const results = db.prepare('SELECT * FROM exam_results WHERE (appointment_id = ? OR exam_appointment_id = ?) AND family_id = ? ORDER BY created_at DESC').all([id, id, familyId]) as any[];
         updated.attached_results = results;
       }
 

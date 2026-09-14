@@ -124,6 +124,12 @@ router.post(
       // Determine exam date: use provided exam_date, else use now
       const effectiveExamDate = exam_date && typeof exam_date === 'string' ? exam_date.trim() : new Date().toISOString();
 
+      // Ensure columns exist just in case
+      try { db.exec('ALTER TABLE exam_results ADD COLUMN exam_appointment_id TEXT;'); } catch(e) {}
+      try { db.exec('ALTER TABLE exam_results ADD COLUMN specialty TEXT;'); } catch(e) {}
+      try { db.exec('ALTER TABLE exam_results ADD COLUMN notes TEXT;'); } catch(e) {}
+      try { db.exec('ALTER TABLE exam_results ADD COLUMN exam_date TEXT;'); } catch(e) {}
+
       // If no exam appointment was provided, create one automatically
       if (!validExamAppointmentId) {
         const autoApptId = uuidv4();
@@ -144,35 +150,62 @@ router.post(
         validExamAppointmentId = autoApptId;
       }
 
-      db.prepare(`
-        INSERT INTO exam_results (id, family_id, patient_id, exam_appointment_id, appointment_id, title, file_url, file_type, summary_ai, specialty, notes, exam_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run([
-        id,
-        familyId,
-        patient_id,
-        validExamAppointmentId,
-        validExamAppointmentId,  // legacy appointment_id field also set for backward compat
-        cleanTitle,
-        fileUrl,
-        fileType,
-        summaryAi,
-        cleanSpecialty,
-        cleanNotes,
-        effectiveExamDate,
-      ]);
+      try {
+        db.prepare(`
+          INSERT INTO exam_results (id, family_id, patient_id, exam_appointment_id, appointment_id, title, file_url, file_type, summary_ai, specialty, notes, exam_date)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run([
+          id,
+          familyId,
+          patient_id,
+          validExamAppointmentId,
+          validExamAppointmentId,
+          cleanTitle,
+          fileUrl,
+          fileType,
+          summaryAi,
+          cleanSpecialty,
+          cleanNotes,
+          effectiveExamDate,
+        ]);
+      } catch (insertErr: any) {
+        // Fallback for older schemas
+        console.warn('Fallback insert into exam_results:', insertErr.message);
+        db.prepare(`
+          INSERT INTO exam_results (id, family_id, patient_id, appointment_id, title, file_url, file_type, summary_ai)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run([
+          id,
+          familyId,
+          patient_id,
+          validExamAppointmentId,
+          cleanTitle,
+          fileUrl,
+          fileType,
+          summaryAi,
+        ]);
+      }
 
-      // NOTE: We intentionally do NOT auto-update the appointment status to 'completada'.
-      // Status is only changed when the user explicitly does so, or when computed by date.
+      // Automatically link to appointment in appointment_exam_links
+      if (validExamAppointmentId) {
+        try {
+          db.prepare(`
+            INSERT OR IGNORE INTO appointment_exam_links (id, appointment_id, exam_result_id, family_id)
+            VALUES (?, ?, ?, ?)
+          `).run(uuidv4(), validExamAppointmentId, id, familyId);
+        } catch (linkErr) {
+          console.warn('Advertencia enlazando resultado con cita:', linkErr);
+        }
+      }
 
       const examResult = db.prepare('SELECT e.*, p.name as patient_name, p.color as patient_color FROM exam_results e JOIN patients p ON e.patient_id = p.id WHERE e.id = ? AND e.family_id = ?').get(id, familyId);
       return res.json(examResult);
-    } catch (error) {
+    } catch (error: any) {
       if (req.file && fs.existsSync(req.file.path)) {
         try { fs.unlinkSync(req.file.path); } catch (e) {}
       }
       console.error('Error subiendo resultado de examen:', error);
-      return res.status(500).json({ error: 'Error procesando el resultado del examen.' });
+      return res.status(500).json({ error: error?.message || 'Error procesando el resultado del examen.' });
     }
   }
 );

@@ -7,6 +7,8 @@ interface ExamModalProps {
   patients: Patient[];
   appointments: Appointment[];
   specialties?: Specialty[];
+  initialPatientId?: string;
+  initialSpecialty?: string;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -15,13 +17,15 @@ export const ExamModal: React.FC<ExamModalProps> = ({
   patients,
   appointments,
   specialties = [],
+  initialPatientId,
+  initialSpecialty,
   onClose,
   onSaved,
 }) => {
-  const [patientId, setPatientId] = useState(patients[0]?.id || '');
+  const [patientId, setPatientId] = useState(initialPatientId || patients[0]?.id || '');
   const [appointmentId, setAppointmentId] = useState('');
   const [title, setTitle] = useState('');
-  const [specialty, setSpecialty] = useState('');
+  const [specialty, setSpecialty] = useState(initialSpecialty || '');
   const [notes, setNotes] = useState('');
   const [examDate, setExamDate] = useState(new Date().toISOString().slice(0, 16)); // default today
   const [file, setFile] = useState<File | null>(null);

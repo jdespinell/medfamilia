@@ -3,12 +3,36 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 
-const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+// Resolve database directory consistently regardless of whether cwd is / or /server
+function getDatabasePath(): { dataDir: string; dbPath: string } {
+  if (process.env.DATA_DIR) {
+    const dataDir = process.env.DATA_DIR;
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    return { dataDir, dbPath: path.join(dataDir, 'medfamilia.db') };
+  }
+
+  // Check possible locations for medfamilia.db
+  const candidateServer = path.resolve(process.cwd(), 'server', 'data');
+  const candidateDirect = path.resolve(process.cwd(), 'data');
+  const candidateParent = path.resolve(process.cwd(), '..', 'data');
+
+  let chosenDir = candidateDirect;
+  if (fs.existsSync(path.join(candidateServer, 'medfamilia.db'))) {
+    chosenDir = candidateServer;
+  } else if (fs.existsSync(path.join(candidateDirect, 'medfamilia.db'))) {
+    chosenDir = candidateDirect;
+  } else if (fs.existsSync(path.join(candidateParent, 'medfamilia.db'))) {
+    chosenDir = candidateParent;
+  }
+
+  if (!fs.existsSync(chosenDir)) {
+    fs.mkdirSync(chosenDir, { recursive: true });
+  }
+
+  return { dataDir: chosenDir, dbPath: path.join(chosenDir, 'medfamilia.db') };
 }
 
-const dbPath = path.join(dataDir, 'medfamilia.db');
+const { dataDir, dbPath } = getDatabasePath();
 const db = new Database(dbPath);
 
 // Enable WAL mode for high concurrency

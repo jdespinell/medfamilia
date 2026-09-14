@@ -27,6 +27,7 @@ import {
   ExternalLink,
   Sparkles,
   Activity,
+  FlaskConical,
 } from 'lucide-react';
 import { apiRequest, getFileUrl, removeToken } from '../api';
 import { Family, Patient, Appointment, Specialty, MedicalOrder } from '../types';
@@ -34,6 +35,7 @@ import { AppointmentModal } from '../components/AppointmentModal';
 import { PatientsModal } from '../components/PatientsModal';
 import { AppointmentDetailModal } from '../components/AppointmentDetailModal';
 import { WhatsAppNumbersModal } from '../components/WhatsAppNumbersModal';
+import { ExamModal } from '../components/ExamModal';
 
 interface DashboardProps {
   family: Family;
@@ -62,6 +64,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout, onViewPa
 
   // Modals
   const [showAppointmentModal, setShowAppointmentModal] = useState(false);
+  const [showExamModal, setShowExamModal] = useState(false);
   const [appointmentToEdit, setAppointmentToEdit] = useState<Appointment | null>(null);
   const [initialOrderToSchedule, setInitialOrderToSchedule] = useState<MedicalOrder | null>(null);
   const [selectedAppointmentForDetail, setSelectedAppointmentForDetail] = useState<Appointment | null>(null);
@@ -568,6 +571,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout, onViewPa
           </button>
         </div>
 
+        {/* Selected Patient Quick Exam Bar */}
+        {selectedPatientId !== 'all' && (
+          <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 p-2.5 px-3.5 rounded-2xl text-xs font-bold text-emerald-900 animate-in fade-in shadow-sm">
+            <span className="flex items-center gap-2">
+              <FlaskConical className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                Expediente y Exámenes de <strong className="text-emerald-950">{patients.find(p => p.id === selectedPatientId)?.name}</strong>
+              </span>
+            </span>
+            {onViewPatientTimeline && (
+              <button
+                onClick={() => {
+                  const p = patients.find(pat => pat.id === selectedPatientId);
+                  if (p) onViewPatientTimeline(p, specialtiesList);
+                }}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl font-black text-xs flex items-center gap-1 transition shadow-sm"
+              >
+                <span>Ver Resultados</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Specialty Filter Dropdown Bar */}
         <div className="bg-white px-4 py-2.5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between gap-3">
@@ -836,18 +862,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout, onViewPa
         )}
       </main>
 
-      {/* Floating Action Button (FAB) for New Appointment */}
-      <div className="fixed bottom-20 right-6 z-40">
+      {/* Floating Action Buttons (FAB) for New Appointment & New Exam */}
+      <div className="fixed bottom-20 right-4 sm:right-6 z-40 flex items-center gap-2">
+        <button
+          onClick={() => setShowExamModal(true)}
+          className="py-3 px-4 rounded-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs sm:text-sm shadow-xl shadow-emerald-600/40 flex items-center gap-1.5 transition"
+          title="Subir resultado de examen"
+        >
+          <FlaskConical className="w-4 h-4" />
+          <span>+ Examen</span>
+        </button>
+
         <button
           onClick={() => {
             setAppointmentToEdit(null);
             setInitialOrderToSchedule(null);
             setShowAppointmentModal(true);
           }}
-          className="py-3.5 px-5 rounded-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-sm shadow-2xl shadow-blue-600/50 flex items-center gap-2 transition"
+          className="py-3 px-4 rounded-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs sm:text-sm shadow-xl shadow-blue-600/40 flex items-center gap-1.5 transition"
         >
-          <Plus className="w-5 h-5" />
-          <span>Nueva Cita</span>
+          <Plus className="w-4 h-4" />
+          <span>+ Cita</span>
         </button>
       </div>
 
@@ -933,6 +968,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ family, onLogout, onViewPa
       {showWhatsAppNumbersModal && (
         <WhatsAppNumbersModal
           onClose={() => setShowWhatsAppNumbersModal(false)}
+        />
+      )}
+
+      {showExamModal && (
+        <ExamModal
+          patients={patients}
+          appointments={appointments}
+          specialties={specialtiesList}
+          initialPatientId={selectedPatientId !== 'all' ? selectedPatientId : undefined}
+          onClose={() => setShowExamModal(false)}
+          onSaved={() => {
+            setShowExamModal(false);
+            fetchData();
+          }}
         />
       )}
     </div>
